@@ -16,7 +16,17 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 
 ## 截图
 
-> TODO：往 `docs/screenshots/` 补截图——实时渲染、代码块高亮、格式工具栏、选区浮动条。
+### Markdown 实时渲染
+
+![输入框实时渲染效果](docs/screenshots/overview.png)
+
+### 代码块
+
+![代码块语法高亮与语言标签](docs/screenshots/code-block.png)
+
+### 选区浮动格式条
+
+![选区上方浮现的浮动格式条](docs/screenshots/selection-bar.png)
 
 ## 功能
 

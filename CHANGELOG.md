@@ -2,6 +2,11 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.11（2026-09-27）
+
+- **README 配图**：双语 README 的截图段落补齐三张实拍（docs/screenshots/）——实时渲染全景（行内格式/任务列表/引用块/链接）、代码块（语法高亮/语言标签/等宽）、选区浮动格式条。新增 `e2e/capture-shots.mjs` 截图脚本（复用 E2E 链路：独立 Chrome + CDP + cookie，注入演示草稿后按输入卡元素截取，画面不含侧栏）。
+- 文档与发布基建：双语 README（英文主 + 中文完整版）、docs/architecture.md 架构深读、e2e/README.md、MIT LICENSE 修正版权行、package.json 补 repository 元数据；e2e/run-e2e.mjs 硬编码路径参数化（DSH_CL_PORT / DSH_CL_E2E_PROFILE / DSH_CL_DST_PKG 环境变量，默认值不变）。
+
 ## 0.2.10（2026-09-27）
 
 **输入体验四件套（用户选定方向全做）：**

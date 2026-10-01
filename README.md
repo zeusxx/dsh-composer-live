@@ -16,7 +16,17 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 
 ## Screenshots
 
-> TODO: add screenshots to `docs/screenshots/` — live rendering, code block highlighting, format toolbar, selection bar.
+### Live markdown rendering
+
+![Live markdown rendering in the composer](docs/screenshots/overview.png)
+
+### Code blocks
+
+![Code block with syntax highlighting and language label](docs/screenshots/code-block.png)
+
+### Selection toolbar
+
+![Floating format bar above the selection](docs/screenshots/selection-bar.png)
 
 ## Features
 
