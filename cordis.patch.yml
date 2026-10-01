@@ -1,0 +1,6 @@
+# dsh-composer-live bundle patch: 挂载一个 loader entry。
+# 浏览器端由 dsh-client-modules 通过 package.json 的 dsh.client 声明自动加载
+# （与官方 ui-* 包、dsh-anthropic-style 相同机制）。
+- insert:
+    - id: dsh-composer-live
+      name: 'dsh-composer-live'

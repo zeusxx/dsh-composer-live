@@ -1,0 +1,4 @@
+node_modules/
+e2e/cookie.txt
+e2e/report-last.json
+e2e/fail-*.png
