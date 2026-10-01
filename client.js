@@ -827,7 +827,7 @@ window.__ModuleLoader__.load({
 				"." + TOOLBAR + "{position:sticky;top:0;left:0;right:0;z-index:60;display:flex;align-items:center;box-sizing:border-box;height:38px;padding:0 10px;gap:2px;background:rgba(28,30,36,.95);border-bottom:1px solid rgba(127,127,127,.16);}" +
 				// sticky 工具栏钉滚动视口顶（v0.2.8）：内容从其下方滚过永不重叠；附件栏在
 				// 滚动容器外，scroll 顶=附件栏底，天然让位（v0.2.7 的让位变量退役）。背景色
-				// 必须不透明——滚动内容从下方经过（用户三报「工具栏透明」的根治）。
+				// 必须不透明——滚动内容从下方经过（实测反馈「工具栏透明」问题的根治）。
 				"body.dsh-cl-light ." + TOOLBAR + "{background:rgba(250,251,253,.97);border-bottom-color:rgba(0,0,0,.08);}" +
 				"." + TOOLBAR + " [data-cl=\"expand\"]{margin-left:auto;}" +
 				

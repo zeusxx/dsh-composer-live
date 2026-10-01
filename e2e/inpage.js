@@ -231,7 +231,7 @@
 	}
 
 	/** 清空草稿：全选 + 合成 beforeinput deleteContentBackward（execCommand delete
-	 *  无 user activation 静默 no-op——CLAUDE.md 插入通道第五坑）。 */
+	 *  无 user activation 静默 no-op——见 docs/architecture.md §5 删除通道）。 */
 	function clearDraft() {
 		var ci = getCardInput();
 		if (!ci) return { ok: false, error: "no-input" };

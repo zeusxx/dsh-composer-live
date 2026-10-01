@@ -1,27 +1,28 @@
 #!/usr/bin/env node
 /**
  * dsh-composer-live E2E 主 runner：拉起独立 Chrome（默认 headless）→ CDP 直连被测页面
- * → 逐场景注入 → 校验十条不变量 → 报告（report-last.json + 控制台摘要 + 退出码）。
+ * → 逐场景注入 → 校验十条不变量 → 报告（report-last-<端口>.json + 控制台摘要 + 退出码）。
  *
- * 用法：
- *   node run-e2e.mjs                    # 跑全场景（要求被测实例已部署当前源码）
- *   node run-e2e.mjs --target 020       # 测 020 评估实例（0.2.0-rc.2，端口 8123）
- *   node run-e2e.mjs --with-deploy      # 先跑 deploy.mjs（部署+重启实例）再测
+ * 用法（要求被测实例已部署当前源码；多实例/非默认布局用环境变量指向它）：
+ *   node run-e2e.mjs                    # 跑全场景（默认端口 8124、部署副本按 DSH_HOME 推导）
  *   node run-e2e.mjs --only crlf        # 只跑名字含 "crlf" 的场景
  *   node run-e2e.mjs --headed           # 有头模式（人工观察；会弹浏览器窗口）
  *   node run-e2e.mjs --keep-browser     # 结束后不关浏览器（调试用）
+ *   node run-e2e.mjs --with-deploy      # 先跑 deploy.mjs 再测（仅私有开发环境：deploy.mjs
+ *                        随私有仓库分发，本包不含，缺失时提示并退出）
  *
- * 测试目标（--target，默认 8124 = 主力实例；环境变量 DSH_CL_TARGET 同效）：
- *   8124 = 主力（.dsh-latest / dsh 0.1.5-rc.2）
- *   020  = 评估（.dsh-020 / dsh 0.2.0-rc.2，端口 8123）
- *
- * 环境变量（不设用默认值，默认值按 --target 取）：
- *   DSH_CL_PORT          被测实例端口（默认按 target）
- *   DSH_CL_E2E_PROFILE   E2E 专用 Chrome profile 目录（默认 ~/.dsh-cl-e2e-profile[-020]）
- *   DSH_CL_DST_PKG       部署副本的 package.json 路径（版本对照用）
+ * 环境变量（不设用默认值）：
+ *   DSH_CL_PORT          被测实例端口（默认 8124）
+ *   DSH_CL_DSH_HOME      被测实例的 DSH_HOME（默认取 DSH_HOME，再默认 ~/.dsh）——推导部署
+ *                        副本位置 <home>/profiles/web/node_modules/dsh-composer-live/…
+ *   DSH_CL_DST_PKG       部署副本 package.json 的完整路径（优先于推导；文件不存在时跳过
+ *                        版本对照不阻塞）
+ *   DSH_CL_E2E_PROFILE   E2E 专用 Chrome profile 目录（默认 ~/.dsh-cl-e2e-profile-<端口>）
+ *   DSH_CL_TARGET        目标别名（--target <name> 同效；仅用于报告文件名/日志/传给
+ *                        deploy.mjs，默认 default）
  *
  * 鉴权：cookie 注入法（token 拿不到——launchToken 是进程内存随机）。cookie 来源优先级：
- *   ① 环境变量 DSH_CL_AUTH_COOKIE；② 本目录 cookie-<端口>.txt（020 用）/ cookie.txt（8124）；
+ *   ① 环境变量 DSH_CL_AUTH_COOKIE；② 本目录 cookie-<端口>.txt；
  *   ③ 自动获取——直接 GET 根路径，服务端对无 cookie 的本机请求会在 Set-Cookie 里发一个
  *   合法的 30 天授权 cookie（0.1.5 与 0.2.0 均如此），拿到后写入 cookie-<端口>.txt 复用。
  *   手动兜底：用户浏览器 DevTools → 应用 → Cookies → http://127.0.0.1:<端口> → 复制
@@ -38,36 +39,23 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(HERE);
 
 // ---------- 测试目标 ----------
-// 部署副本路径按「用户主目录下的 DSH_HOME 约定」拼（不写死绝对路径）；非默认布局用
-// DSH_CL_DST_PKG 环境变量覆盖。
-const TARGETS = {
-	"8124": {
-		label: "主力（.dsh-latest，dsh 0.1.5-rc.2）",
-		port: 8124,
-		dstPkg: path.join(os.homedir(), ".dsh-latest/profiles/web/node_modules/dsh-composer-live/package.json"),
-		profileDir: path.join(os.homedir(), ".dsh-cl-e2e-profile"),
-		cookieFile: "cookie.txt", // 历史文件名，保持兼容
-		report: "report-last.json",
-	},
-	"020": {
-		label: "评估（.dsh-020，dsh 0.2.0-rc.2，端口 8123）",
-		port: 8123,
-		dstPkg: path.join(os.homedir(), ".dsh-020/profiles/web/node_modules/dsh-composer-live/package.json"),
-		profileDir: path.join(os.homedir(), ".dsh-cl-e2e-profile-020"),
-		cookieFile: "cookie-8123.txt",
-		report: "report-last-020.json",
-	},
-};
+// 全部由环境变量推导：端口默认 8124；部署副本按标准安装位置从 DSH_HOME 推导（DSH_CL_DST_PKG
+// 可整体覆盖）。--target 只是「目标别名」——用在报告文件名、日志与传给 deploy.mjs，不影响路径。
 const targetKey = process.env.DSH_CL_TARGET
 	|| (process.argv.join(" ").match(/--target\s+(\S+)/) || [])[1]
-	|| "8124";
-const T = TARGETS[targetKey];
-if (!T) { console.error("失败: 未知目标 " + targetKey + "（可选 " + Object.keys(TARGETS).join(" / ") + "）"); process.exit(1); }
-
-const PORT = Number(process.env.DSH_CL_PORT) || T.port;
+	|| "default";
+const PORT = Number(process.env.DSH_CL_PORT) || 8124;
 const BASE = `http://127.0.0.1:${PORT}/`;
-const PROFILE_DIR = process.env.DSH_CL_E2E_PROFILE || T.profileDir; // 本地目录（绝不放网盘同步目录）
-const DST_PKG = process.env.DSH_CL_DST_PKG || T.dstPkg;
+const DSH_HOME = process.env.DSH_CL_DSH_HOME || process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+const T = {
+	label: `DSH 实例（${BASE}，DSH_HOME=${DSH_HOME}）`,
+	cookieFile: `cookie-${PORT}.txt`,
+	report: `report-last-${PORT}.json`,
+};
+const PROFILE_DIR = process.env.DSH_CL_E2E_PROFILE // 本地目录（绝不放网盘同步目录）
+	|| path.join(os.homedir(), `.dsh-cl-e2e-profile-${PORT}`);
+const DST_PKG = process.env.DSH_CL_DST_PKG
+	|| path.join(DSH_HOME, "profiles", "web", "node_modules", "dsh-composer-live", "package.json");
 const CHROME_CANDIDATES = [
 	"C:/Program Files/Google/Chrome/Application/chrome.exe",
 	"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -76,8 +64,8 @@ const CHROME_CANDIDATES = [
 	"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ];
 // INV-8 已知无害噪音（基线收集后维护；按子串匹配）
-// 020（0.2.0-rc.2）刷新页面时 sidebar.footer slot 的第三方插件渲染崩溃（官方错误边界
-// 兜住、无功能损失，CLAUDE.md 2026-10-01 定案的环境噪音，与 composer-live 无关）
+// dsh 0.2.0-rc.2 刷新页面时 sidebar.footer slot 第三方插件的 React #130 渲染崩溃（官方
+// 错误边界兜住、无功能损失，与本插件无关）
 const KNOWN_NOISE = ["Minified React error #130"];
 
 const argv = process.argv.slice(2);
@@ -94,8 +82,8 @@ const die = (s) => { console.error("失败: " + s); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- cookie ----------
-// 优先级：环境变量 > cookie-<端口>.txt（8124 历史名 cookie.txt）> 自动获取（服务端对无
-// cookie 的本机请求直接在 Set-Cookie 发 30 天授权 cookie——0.1.5/0.2.0 均实测如此）。
+// 优先级：环境变量 > cookie-<端口>.txt > 自动获取（服务端对无 cookie 的本机请求直接在
+// Set-Cookie 发 30 天授权 cookie——0.1.5/0.2.0 均实测如此）。
 async function autoCookie() {
 	try {
 		const res = await fetch(BASE, { redirect: "manual", signal: AbortSignal.timeout(5000) });
@@ -113,6 +101,20 @@ let cookiePairs = String(process.env.DSH_CL_AUTH_COOKIE || "")
 if (!cookiePairs.length) {
 	try { cookiePairs = fs.readFileSync(path.join(HERE, T.cookieFile), "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#")); } catch { /* 文件不存在 */ }
 }
+// 自动获取放在部署/探活之后（--with-deploy 时实例可能尚未启动，得先拉起来才拿得到 Set-Cookie）
+
+// ---------- 前置：部署 / 探活 / 版本 ----------
+if (opt.withDeploy) {
+	const deployScript = path.join(ROOT, "deploy.mjs");
+	if (!fs.existsSync(deployScript)) {
+		die("--with-deploy 需要 deploy.mjs（它随私有开发环境分发，不在本包内）。请手动把当前源码部署进被测实例后直接运行 run-e2e.mjs");
+	}
+	log("== 先部署（deploy.mjs）==");
+	const r = spawnSync(process.execPath, [deployScript, "--target", targetKey], { stdio: "inherit" });
+	if (r.status !== 0) die("deploy.mjs 失败");
+}
+
+// ---------- 部署后补取 cookie ----------
 if (!cookiePairs.length) {
 	const pair = await autoCookie();
 	if (pair) cookiePairs = [pair];
@@ -121,26 +123,21 @@ if (!cookiePairs.length || !cookiePairs[0]) {
 	die(`缺少鉴权 cookie。获取方法：\n  用户浏览器打开 ${BASE} → F12 → 应用(Application) → Cookies → http://127.0.0.1:${PORT}\n  → 复制 dsh-auth- 开头那行的「名=值」→ 存入 ${path.join(HERE, T.cookieFile)}（每行一个，不进 git）\n  或临时用环境变量 DSH_CL_AUTH_COOKIE="名=值"`);
 }
 
-// ---------- 前置：部署 / 探活 / 版本 ----------
-if (opt.withDeploy) {
-	log("== 先部署（deploy.mjs）==");
-	const r = spawnSync(process.execPath, [path.join(ROOT, "deploy.mjs"), "--target", targetKey], { stdio: "inherit" });
-	if (r.status !== 0) die("deploy.mjs 失败");
-}
-
 try {
 	const res = await fetch(BASE, { redirect: "manual", signal: AbortSignal.timeout(5000) });
 	if (![200, 303, 401].includes(res.status)) die(`${PORT} 探活异常（HTTP ${res.status}）`);
 	log(`目标 ${targetKey}（${T.label}）`);
 	log(`${PORT} 探活通过（HTTP ${res.status}）`);
 } catch (e) {
-	die(`${PORT} 未启动（${e.message}）。先跑 node ${path.join(ROOT, "deploy.mjs")} --target ${targetKey} 或用 --with-deploy`);
+	die(`${PORT} 未启动（${e.message}）。先把实例跑起来（部署了当前源码），再运行测试`);
 }
 
 const srcVer = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-const dstVer = JSON.parse(fs.readFileSync(DST_PKG, "utf8")).version;
-if (srcVer !== dstVer) die(`源码 v${srcVer} 与部署副本 v${dstVer} 不一致——先部署（--with-deploy）再测`);
-log(`插件版本 v${srcVer}（源码=部署副本）`);
+let dstVer = null;
+try { dstVer = JSON.parse(fs.readFileSync(DST_PKG, "utf8")).version; } catch { /* 部署副本不存在 */ }
+if (dstVer == null) log(`插件版本 v${srcVer}（未找到部署副本，跳过版本对照：${DST_PKG}）`);
+else if (srcVer !== dstVer) die(`源码 v${srcVer} 与部署副本 v${dstVer} 不一致——先部署（--with-deploy）再测`);
+else log(`插件版本 v${srcVer}（源码=部署副本）`);
 
 // ---------- Chrome ----------
 const exe = CHROME_CANDIDATES.find((p) => p && fs.existsSync(p));

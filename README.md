@@ -152,11 +152,13 @@ See [docs/architecture.md](./docs/architecture.md) for the full deep dive.
 ## Development
 
 ```bash
-node test-live.cjs                  # 188 unit tests (pure functions, no browser needed)
-node e2e/run-e2e.mjs --with-deploy  # 53-scenario × 10-invariant E2E suite against a live instance
+node test-live.cjs    # 188 unit tests (pure functions, no browser needed)
+node e2e/run-e2e.mjs  # 62-scenario × 10-invariant E2E suite against a live instance
 ```
 
-The E2E suite replays six real input channels (literal `\n` / literal `\r\n` / line-by-line br / insertParagraph / synthetic paste / refresh-restore multi-paragraph) and cross-checks an independent projection against the plugin's own, character by character. See [e2e/README.md](./e2e/README.md).
+The E2E runner expects a DSH web instance with this source deployed and derives everything from environment variables: `DSH_CL_PORT` (default 8124) and `DSH_CL_DSH_HOME` (defaults to `DSH_HOME`, then `~/.dsh`) locate the deployed copy for a version check; the auth cookie is fetched automatically. See [e2e/README.md](./e2e/README.md) for the full variable list.
+
+The suite replays six real input channels (literal `\n` / literal `\r\n` / line-by-line br / insertParagraph / synthetic paste / refresh-restore multi-paragraph) and cross-checks an independent projection against the plugin's own, character by character.
 
 Version discipline: every change bumps `package.json` and gets a [CHANGELOG.md](./CHANGELOG.md) entry.
 

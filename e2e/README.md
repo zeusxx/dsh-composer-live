@@ -16,21 +16,31 @@
 
 前置条件：
 
-1. 一个运行中的 DSH Web 实例（`--target 8124` 默认，或 `--target 020` 测 0.2.0 评估实例，端口 8123），且已部署当前源码（`--with-deploy` 会先跑部署）。
-2. 鉴权 cookie：**自动获取**——runner 直接 GET 根路径，服务端对无 cookie 的本机请求会在 Set-Cookie 里发一个 30 天授权 cookie（0.1.5/0.2.0 均如此），拿到自动存 `cookie-<端口>.txt` 复用。手动兜底（自动获取失败时）：浏览器打开实例 → DevTools → 应用 → Cookies → 复制 `dsh-auth-` 开头那行的「名=值」→ 存入 `cookie-8123.txt`（020）或 `cookie.txt`（8124），不进 git。
+1. 一个运行中的 DSH Web 实例，且已部署当前源码。实例位置全部由环境变量描述（见下表）：默认端口 8124、部署副本按 `DSH_CL_DSH_HOME`（默认取 `DSH_HOME`，再默认 `~/.dsh`）推导；多实例/非默认布局改变量即可。
+2. 鉴权 cookie：**自动获取**——runner 直接 GET 根路径，服务端对无 cookie 的本机请求会在 Set-Cookie 里发一个 30 天授权 cookie（0.1.5/0.2.0 均如此），拿到自动存 `cookie-<端口>.txt` 复用。手动兜底（自动获取失败时）：浏览器打开实例 → DevTools → 应用 → Cookies → 复制 `dsh-auth-` 开头那行的「名=值」→ 存入 `cookie-<端口>.txt`，不进 git。
 3. 0.2.0 实例首访会弹「预览版说明」modal——它的焦点陷阱会让 `input.focus()`/`execCommand`/点击全部失效，**弹窗没关时的测试结果全部作废**。runner 已内置 `dismissDialogs` 自动点「继续」。
 
 ```bash
-node e2e/run-e2e.mjs --target 020 --with-deploy   # 部署 + 重启 020 + 全场景回归
-node e2e/run-e2e.mjs --target 8124 --with-deploy  # 同款，主力实例（重启前跟用户打招呼）
-node e2e/run-e2e.mjs --only crlf                  # 只跑名字含 "crlf" 的场景
-node e2e/run-e2e.mjs --headed                     # 有头模式，人工观察
-node e2e/run-e2e.mjs --diag-dy                    # 输出 INV-3 超差字符的坐标偏移诊断
+node e2e/run-e2e.mjs                       # 全场景（默认 8124 + DSH_HOME 推导）
+DSH_CL_PORT=8125 DSH_CL_DSH_HOME=~/.dsh-nightly node e2e/run-e2e.mjs   # 指向另一个实例
+node e2e/run-e2e.mjs --only crlf           # 只跑名字含 "crlf" 的场景
+node e2e/run-e2e.mjs --headed              # 有头模式，人工观察
+node e2e/run-e2e.mjs --diag-dy             # 输出 INV-3 超差字符的坐标偏移诊断
 ```
 
-可配置项（环境变量，均有默认值）：`DSH_CL_PORT`（端口）、`DSH_CL_E2E_PROFILE`（E2E 专用 Chrome profile 目录，勿放网盘同步目录）、`DSH_CL_DST_PKG`（部署副本路径，版本对照用）、`DSH_CL_TARGET`（同 `--target`）。
+可配置项（环境变量，均有默认值）：
 
-报告输出按目标分文件：`report-last.json`（8124）/ `report-last-020.json`（020）+ 控制台摘要；失败场景截图存 `fail-*.png`（均不进 git）。退出码全绿 0 / 有失败 1。
+| 变量 | 作用 |
+| --- | --- |
+| `DSH_CL_PORT` | 被测实例端口（默认 8124） |
+| `DSH_CL_DSH_HOME` | 被测实例的 DSH_HOME（默认取 `DSH_HOME`，再默认 `~/.dsh`）——推导部署副本位置 |
+| `DSH_CL_DST_PKG` | 部署副本 package.json 完整路径（优先于推导；不存在时跳过版本对照） |
+| `DSH_CL_E2E_PROFILE` | E2E 专用 Chrome profile 目录（默认 `~/.dsh-cl-e2e-profile-<端口>`，勿放网盘同步目录） |
+| `DSH_CL_TARGET` / `--target <name>` | 目标别名（报告文件名/日志/传给部署脚本用，不影响路径） |
+
+`--with-deploy`（先跑部署再测）依赖仓库根的 `deploy.mjs`——它随私有开发环境分发，不在这份发布包里；分发包内使用该参数会得到提示，手动部署后直接运行即可。
+
+报告输出按端口分文件：`report-last-<端口>.json` + 控制台摘要；失败场景截图存 `fail-*.png`（均不进 git）。退出码全绿 0 / 有失败 1。
 
 ## 场景矩阵
 
@@ -67,7 +77,7 @@ node e2e/run-e2e.mjs --diag-dy                    # 输出 INV-3 超差字符的
 | 5 | **段健康**：无空段；有内容且透明化激活时必有渲染段 |
 | 6 | **行距均匀**：「多余空白」探测器，软换行感知公式（unit×(视觉行差+行号差)） |
 | 7 | **caret 几何**：collapsed selection 的 rect 落在期望字符位置（采样多点） |
-| 8 | **console 干净**：场景期间无新增 console 错误（runner 侧 CDP 收集，维护已知噪音白名单——020 的 sidebar.footer React #130） |
+| 8 | **console 干净**：场景期间无新增 console 错误（runner 侧 CDP 收集，维护已知噪音白名单——dsh 0.2.0-rc.2 的 sidebar.footer React #130） |
 | 9 | **兜底状态**：有内容时「透明化中且有段」或「已回退官方显示」二居其一（不许半透明无渲染的中间态） |
 | 10 | **chip 行降级**：@ 胶囊在场时编辑器段落 KEEP 原样显示在位 |
 
@@ -80,5 +90,5 @@ node e2e/run-e2e.mjs --diag-dy                    # 输出 INV-3 超差字符的
 
 - **只动草稿，绝不发送**——E2E 永不在真实工作区发消息。
 - 每场景测完自动清空草稿（跑之前确认用户没有未发送的重要草稿）。
-- `--with-deploy` 会重启被测实例，共享该实例的人在场时慎用。
+- `--with-deploy` 会重启被测实例（且仅私有开发环境可用），共享该实例的人在场时慎用。
 - 同一 Chrome profile 不能并发跑两个 runner。

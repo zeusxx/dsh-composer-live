@@ -152,11 +152,13 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 ## 开发
 
 ```bash
-node test-live.cjs                  # 188 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs --with-deploy  # 53 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node test-live.cjs    # 188 项单测（纯函数，无需浏览器）
+node e2e/run-e2e.mjs  # 62 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
 ```
 
-E2E 套件复刻六种真实输入通道（字面 `\n` / 字面 `\r\n` / 逐行 br / insertParagraph / 合成 paste / 刷新恢复多段落），用一份独立投影与插件自身的投影逐字符交叉验证。见 [e2e/README.md](./e2e/README.md)。
+E2E runner 要求被测实例已部署当前源码，路径全部由环境变量推导：`DSH_CL_PORT`（默认 8124）与 `DSH_CL_DSH_HOME`（默认取 `DSH_HOME`，再默认 `~/.dsh`）定位部署副本做版本对照，鉴权 cookie 自动获取。完整变量表见 [e2e/README.md](./e2e/README.md)。
+
+套件复刻六种真实输入通道（字面 `\n` / 字面 `\r\n` / 逐行 br / insertParagraph / 合成 paste / 刷新恢复多段落），用一份独立投影与插件自身的投影逐字符交叉验证。
 
 版本纪律：每次改动 bump `package.json` 并在 [CHANGELOG.md](./CHANGELOG.md) 记一笔。
 
