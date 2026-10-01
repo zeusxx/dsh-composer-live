@@ -239,7 +239,13 @@
 		input.focus();
 		var anchors = buildIndAnchors(input);
 		if (indProject(anchors) === "") return { ok: true, already: true };
-		document.execCommand("selectAll", false, null);
+		// Range 框选全部（不用 execCommand selectAll——modal 弹窗/焦点不在位时会溢出
+		// 到页面级，020 实测；Range 直指 input 内容不受影响）
+		var r = document.createRange();
+		r.selectNodeContents(input);
+		var sel = window.getSelection();
+		sel.removeAllRanges();
+		sel.addRange(r);
 		bi(input, "deleteContentBackward");
 		return { ok: true };
 	}
@@ -257,11 +263,19 @@
 	 *                  续项、围栏补全）。只用于会被插件拦截的行：普通行的 Enter 放行
 	 *                  官方 keymap 会触发「发送消息」！
 	 *   "tab"          合成 Tab keydown（o.shift）——缩进/反缩进（全行境均被插件拦截）
-	 *   "key"          合成任意 keydown {key, ctrl?, shift?}（Ctrl+B/I/E 格式快捷键）
+	 *   "key"          合成任意 keydown {key, ctrl?, shift?}（Ctrl+B/I/E 格式快捷键、
+	 *                  Ctrl+A 全选、Ctrl+Z/Y 撤销重做——官方 keymap 均处理合成事件）
 	 *   "expectSrc"    断言当前投影文本 === o.expect（不匹配返回 ok:false + got）
 	 *   "expectClass"  断言 overlay 内存在 o.selector 的元素至少 1 个（渲染层断言）
+	 *   "attachImage"  造 PNG → 合成 paste（drop 序列兜底）挂官方附件管线（async）
+	 *   "detachImages" 移除全部附件胶囊（官方删除按钮；删不净返回 ok:false）
+	 *   "toolbarClear" 断言工具栏与附件胶囊（card 内 input 外的 img）零重叠
+	 *   "scrollToolbar" 滚动容器滚 o.amount，断言工具栏 sticky 钉住、内容上移（async）
+	 *   "menuNearInput" 打 o.text（默认 "@"）触发官方候选菜单，断言菜单贴输入框上沿
+	 *                  （间隙 ≤ o.maxGap，默认 30px——v0.2.6 fixTriggerMenuPos 回归）（async）
+	 *   "snapshotClass" 断言 o.selector 的元素数 ≥ o.min（通用 DOM 断言，不限 overlay）
 	 */
-	function op(o) {
+	async function op(o) {
 		var ci = getCardInput();
 		if (!ci) return { ok: false, error: "no-input" };
 		var input = ci.input;
@@ -330,8 +344,129 @@
 				r3.setEnd(rb3.startContainer, rb3.startOffset);
 				sel3.addRange(r3);
 			}
+		} else if (o.type === "attachImage") {
+			return await attachImage(ci);
+		} else if (o.type === "detachImages") {
+			return await detachImages(ci);
+		} else if (o.type === "toolbarClear") {
+			var tb = ci.card.querySelector(".dsh-cl-toolbar");
+			if (!tb) return { ok: false, got: "no-toolbar" };
+			var tr = tb.getBoundingClientRect();
+			var worst = null;
+			var imgs2 = ci.card.querySelectorAll("img");
+			for (var i3 = 0; i3 < imgs2.length; i3++) {
+				if (ci.input.contains(imgs2[i3])) continue; // 只看附件（编辑器外的 img）
+				var ir2 = imgs2[i3].getBoundingClientRect();
+				var ovY = !(tr.bottom <= ir2.top + 1 || ir2.bottom <= tr.top + 1);
+				var ovX = !(tr.right <= ir2.left || ir2.right <= tr.left);
+				if (ovY && ovX) worst = { tbTop: +tr.top.toFixed(1), tbBottom: +tr.bottom.toFixed(1), imgTop: +ir2.top.toFixed(1), imgBottom: +ir2.bottom.toFixed(1) };
+			}
+			if (worst) return { ok: false, got: "工具栏与附件重叠 " + JSON.stringify(worst) };
+		} else if (o.type === "scrollToolbar") {
+			var tb2 = ci.card.querySelector(".dsh-cl-toolbar");
+			if (!tb2) return { ok: false, got: "no-toolbar" };
+			var sc = null, n2 = tb2.parentElement;
+			while (n2 && n2 !== document.body) {
+				var st = getComputedStyle(n2);
+				if (/(auto|scroll)/.test(st.overflowY) && n2.scrollHeight > n2.clientHeight + 4) { sc = n2; break; }
+				n2 = n2.parentElement;
+			}
+			if (!sc) return { ok: false, got: "no-scroll-container（内容不够长？）" };
+			var tbBefore = tb2.getBoundingClientRect().top;
+			var cBefore = input.getBoundingClientRect().top;
+			sc.scrollTop = Math.min(sc.scrollTop + (o.amount || 800), sc.scrollHeight - sc.clientHeight);
+			await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
+			await new Promise(function (r) { setTimeout(r, 120); });
+			var tbAfter = tb2.getBoundingClientRect().top;
+			var cAfter = input.getBoundingClientRect().top;
+			var sticky = Math.abs(tbAfter - tbBefore) < 2; // 工具栏钉视口顶不动
+			var scrolled = (cBefore - cAfter) > 50;        // 内容确实滚上去了
+			if (!sticky || !scrolled) return { ok: false, got: "sticky=" + sticky + " scrolled=" + scrolled + " 工具栏 top " + tbBefore.toFixed(1) + "→" + tbAfter.toFixed(1) + " 内容位移 " + (cBefore - cAfter).toFixed(1) + "px" };
+		} else if (o.type === "menuNearInput") {
+			document.execCommand("insertText", false, String(o.text || "@"));
+			await new Promise(function (r) { setTimeout(r, o.wait || 1500); });
+			var menu = document.querySelector("[data-trigger-menu]") || document.querySelector('[role="listbox"]');
+			var mr = menu ? menu.getBoundingClientRect() : null;
+			var ir3 = input.getBoundingClientRect();
+			var gap = mr ? (ir3.top - mr.bottom) : -1;
+			// 收尾：Esc 关菜单（防候选菜单拦截后续 clearDraft 的全选删除）
+			input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+			await new Promise(function (r) { setTimeout(r, 250); });
+			if (!mr) return { ok: false, got: "候选菜单未弹出（选择器 [data-trigger-menu]/[role=listbox] 均无命中）" };
+			var maxGap = o.maxGap || 30;
+			if (gap > maxGap) return { ok: false, got: "菜单底距输入框顶 " + gap.toFixed(1) + "px（> " + maxGap + "）悬空溢出" };
+		} else if (o.type === "snapshotClass") {
+			var host = o.host === "card" ? ci.card : document;
+			var hits2 = host.querySelectorAll(o.selector).length;
+			if (hits2 < (o.min || 1)) return { ok: false, got: o.selector + " 命中 " + hits2 + " < " + (o.min || 1) };
 		}
 		return { ok: true, srcLen: src.length };
+	}
+
+	/** 附件胶囊计数：card 内、input 外的 img（几何法与 v0.2.7 offsetToolbarForAttachments
+	 * 同源，不依赖官方 hash 类名；编辑器内 img 不算）。 */
+	function attachCount(ci) {
+		var n = 0;
+		var imgs = ci.card.querySelectorAll("img");
+		for (var i = 0; i < imgs.length; i++) if (!ci.input.contains(imgs[i])) n++;
+		return n;
+	}
+
+	/** 造 PNG → 合成 paste（官方 intakeFiles 管线）→ drop 序列兜底。与真实
+	 * 「粘贴图片」同路（diag-image.mjs 2026-09-25 实测的注入法）。async op。 */
+	async function attachImage(ci) {
+		var input = ci.input;
+		input.focus();
+		var cv = document.createElement("canvas"); cv.width = 240; cv.height = 140;
+		var cx = cv.getContext("2d");
+		cx.fillStyle = "#3a7bd5"; cx.fillRect(0, 0, 240, 140);
+		cx.fillStyle = "#ffd166"; cx.beginPath(); cx.arc(120, 70, 45, 0, 7); cx.fill();
+		var blob = await new Promise(function (r) { cv.toBlob(r, "image/png"); });
+		var file = new File([blob], "e2e-attach.png", { type: "image/png" });
+		var mkDT = function () { var dt = new DataTransfer(); dt.items.add(file); return dt; };
+		input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: mkDT() }));
+		await new Promise(function (r) { setTimeout(r, 1400); });
+		var n = attachCount(ci);
+		if (!n) {
+			var rect = input.getBoundingClientRect();
+			var pt = { clientX: rect.left + 60, clientY: rect.top + 20 };
+			for (var i = 0; i < 2; i++) {
+				var type = i === 0 ? "dragenter" : "dragover";
+				input.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true }, pt, { dataTransfer: mkDT() })));
+				await new Promise(function (r) { requestAnimationFrame(r); });
+			}
+			input.dispatchEvent(new DragEvent("drop", Object.assign({ bubbles: true, cancelable: true }, pt, { dataTransfer: mkDT() })));
+			await new Promise(function (r) { setTimeout(r, 1600); });
+			n = attachCount(ci);
+		}
+		return n > 0 ? { ok: true, imgs: n } : { ok: false, got: "附件未挂上（paste 与 drop 双通道均失败）" };
+	}
+
+	/** 移除全部附件胶囊：找附件 img 的可点击删除按钮（官方胶囊 hover 出现的 × /
+	 * aria-label 含 remove|delete|close|移除|删除 的 button），逐个点掉再数。 */
+	async function detachImages(ci) {
+		for (var round = 0; round < 4; round++) {
+			var imgs = Array.prototype.slice.call(ci.card.querySelectorAll("img")).filter(function (el) { return !ci.input.contains(el); });
+			if (!imgs.length) return { ok: true };
+			for (var i = 0; i < imgs.length; i++) {
+				// 胶囊宿主：img 向上到 card 内第一个含 button 的祖先（跳过 img 自身）
+				var host = imgs[i].parentElement, guard = 0;
+				while (host && host !== ci.card && guard++ < 8) {
+					if (host.querySelector("button")) break;
+					host = host.parentElement;
+				}
+				if (!host || host === ci.card) host = imgs[i].parentElement;
+				var btns = host ? Array.prototype.slice.call(host.querySelectorAll("button")) : [];
+				var del = btns.find(function (b) {
+					var al = (b.getAttribute("aria-label") || "") + " " + b.className + " " + (b.title || "");
+					return /remove|delete|close|dismiss|移除|删除|×|✕/i.test(al);
+				});
+				(del || btns[btns.length - 1] || imgs[i]).click();
+				await new Promise(function (r) { setTimeout(r, 350); });
+			}
+		}
+		var left = attachCount(ci);
+		return left ? { ok: false, got: "残留附件 " + left + " 个（找不到可用的删除按钮）" } : { ok: true };
 	}
 
 	/** DOM Selection 端 → 投影 offset（offsetFromSelection 同构复刻，selectLine 用） */

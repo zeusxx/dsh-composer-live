@@ -2,6 +2,19 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.12（2026-10-01）
+
+**E2E 测试体系升级为双环境 62 场景（插件本体零改动——本版是测试基建与发布配套）。** v0.2.11 的插件代码在 dsh 0.1.5-rc.2 与 0.2.0-rc.2 两个环境各跑一轮 62 场景全绿，本版把这套测试能力作为包内容发布。
+
+- **`--target <8124|020>` 双测试目标**：一套脚本测多个 dsh 版本（0.1.5-rc.2 / 0.2.0-rc.2），`TARGETS` 表可扩展新版本；报告文件按目标分开（`report-last.json` / `report-last-020.json`）。
+- **鉴权 cookie 全自动**：dsh 0.1.5/0.2.0 对无 cookie 的本机请求会在 Set-Cookie 里直接发一个 30 天授权 cookie——runner 自动获取并存 `cookie-<端口>.txt`，不再需要从 DevTools 手动复制。
+- **0.2.0 首访 modal 弹窗自动关闭**：新浏览器 profile 首次打开 0.2.0 会弹「预览版说明」modal，其焦点陷阱会让 `input.focus()`、`execCommand`、合成 beforeinput 全部失效（症状是「时灵时不灵」的插入与删除）——runner 内置 `dismissDialogs` 自动点「继续」；**弹窗未关闭时的测试结果全部作废**。
+- **新增 R 组 9 场景（53→62）**：图片附件在场（打字渲染 / 长文本滚动 / @ 候选菜单贴输入框——对应 v0.2.6-0.2.8 三个附件 bug 的回归）、全选替换 + Ctrl+Z 撤销、Ctrl+Y 重做、窄视口软折行、注入后改视口重排、长文滚动工具栏 sticky 钉顶、空文档基线。
+- `inpage.js` op 集扩充：`attachImage` / `detachImages` / `toolbarClear` / `scrollToolbar` / `menuNearInput` / `snapshotClass`；op 改 async（runner 侧 awaitPromise）；`clearDraft` 改用 `Range.selectNodeContents`（`execCommand("selectAll")` 在焦点不在编辑器内时会溢出到页面级）。
+- 视口控制：场景可声明 `viewport` / `resizeAfter`（Emulation.setDeviceMetricsOverride），覆盖窄窗口软折行与 resize 重渲染路径。
+- INV-8 白名单：0.2.0-rc.2 刷新页面时 sidebar.footer slot 第三方插件的 React #130 噪音（官方错误边界兜住、与输入框插件无关）。
+- 部署脚本 `deploy.mjs` 同步支持 `--target`（不进发布包，随私有仓库分发）。
+
 ## 0.2.11（2026-09-27）
 
 - **README 配图**：双语 README 的截图段落补齐三张实拍（docs/screenshots/）——实时渲染全景（行内格式/任务列表/引用块/链接）、代码块（语法高亮/语言标签/等宽）、选区浮动格式条。新增 `e2e/capture-shots.mjs` 截图脚本（复用 E2E 链路：独立 Chrome + CDP + cookie，注入演示草稿后按输入卡元素截取，画面不含侧栏）。

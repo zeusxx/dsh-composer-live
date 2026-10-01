@@ -5,19 +5,26 @@
  *
  * 用法：
  *   node run-e2e.mjs                    # 跑全场景（要求被测实例已部署当前源码）
+ *   node run-e2e.mjs --target 020       # 测 020 评估实例（0.2.0-rc.2，端口 8123）
  *   node run-e2e.mjs --with-deploy      # 先跑 deploy.mjs（部署+重启实例）再测
  *   node run-e2e.mjs --only crlf        # 只跑名字含 "crlf" 的场景
  *   node run-e2e.mjs --headed           # 有头模式（人工观察；会弹浏览器窗口）
  *   node run-e2e.mjs --keep-browser     # 结束后不关浏览器（调试用）
  *
- * 环境变量（不设用默认值，默认值对应本机主测试实例）：
- *   DSH_CL_PORT          被测实例端口（默认 8124）
- *   DSH_CL_E2E_PROFILE   E2E 专用 Chrome profile 目录（默认 ~/.dsh-cl-e2e-profile）
- *   DSH_CL_DST_PKG       部署副本的 package.json 路径（版本对照用，默认 .dsh-latest 副本）
+ * 测试目标（--target，默认 8124 = 主力实例；环境变量 DSH_CL_TARGET 同效）：
+ *   8124 = 主力（.dsh-latest / dsh 0.1.5-rc.2）
+ *   020  = 评估（.dsh-020 / dsh 0.2.0-rc.2，端口 8123）
  *
- * 鉴权：cookie 注入法（token 拿不到——launchToken 是进程内存随机）。cookie 来源：
- *   环境变量 DSH_CL_AUTH_COOKIE 或本目录 cookie.txt（每行一个「名=值」）。
- *   获取：用户浏览器 DevTools → 应用 → Cookies → http://127.0.0.1:<端口> → 复制
+ * 环境变量（不设用默认值，默认值按 --target 取）：
+ *   DSH_CL_PORT          被测实例端口（默认按 target）
+ *   DSH_CL_E2E_PROFILE   E2E 专用 Chrome profile 目录（默认 ~/.dsh-cl-e2e-profile[-020]）
+ *   DSH_CL_DST_PKG       部署副本的 package.json 路径（版本对照用）
+ *
+ * 鉴权：cookie 注入法（token 拿不到——launchToken 是进程内存随机）。cookie 来源优先级：
+ *   ① 环境变量 DSH_CL_AUTH_COOKIE；② 本目录 cookie-<端口>.txt（020 用）/ cookie.txt（8124）；
+ *   ③ 自动获取——直接 GET 根路径，服务端对无 cookie 的本机请求会在 Set-Cookie 里发一个
+ *   合法的 30 天授权 cookie（0.1.5 与 0.2.0 均如此），拿到后写入 cookie-<端口>.txt 复用。
+ *   手动兜底：用户浏览器 DevTools → 应用 → Cookies → http://127.0.0.1:<端口> → 复制
  *   dsh-auth- 开头那行的「名=值」。
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -29,12 +36,38 @@ import { SCENARIOS } from "./scenarios.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(HERE);
-const PORT = Number(process.env.DSH_CL_PORT) || 8124;
+
+// ---------- 测试目标 ----------
+// 部署副本路径按「用户主目录下的 DSH_HOME 约定」拼（不写死绝对路径）；非默认布局用
+// DSH_CL_DST_PKG 环境变量覆盖。
+const TARGETS = {
+	"8124": {
+		label: "主力（.dsh-latest，dsh 0.1.5-rc.2）",
+		port: 8124,
+		dstPkg: path.join(os.homedir(), ".dsh-latest/profiles/web/node_modules/dsh-composer-live/package.json"),
+		profileDir: path.join(os.homedir(), ".dsh-cl-e2e-profile"),
+		cookieFile: "cookie.txt", // 历史文件名，保持兼容
+		report: "report-last.json",
+	},
+	"020": {
+		label: "评估（.dsh-020，dsh 0.2.0-rc.2，端口 8123）",
+		port: 8123,
+		dstPkg: path.join(os.homedir(), ".dsh-020/profiles/web/node_modules/dsh-composer-live/package.json"),
+		profileDir: path.join(os.homedir(), ".dsh-cl-e2e-profile-020"),
+		cookieFile: "cookie-8123.txt",
+		report: "report-last-020.json",
+	},
+};
+const targetKey = process.env.DSH_CL_TARGET
+	|| (process.argv.join(" ").match(/--target\s+(\S+)/) || [])[1]
+	|| "8124";
+const T = TARGETS[targetKey];
+if (!T) { console.error("失败: 未知目标 " + targetKey + "（可选 " + Object.keys(TARGETS).join(" / ") + "）"); process.exit(1); }
+
+const PORT = Number(process.env.DSH_CL_PORT) || T.port;
 const BASE = `http://127.0.0.1:${PORT}/`;
-const PROFILE_DIR = process.env.DSH_CL_E2E_PROFILE
-	|| path.join(os.homedir(), ".dsh-cl-e2e-profile"); // 本地目录（绝不放网盘同步目录）
-const DST_PKG = process.env.DSH_CL_DST_PKG
-	|| path.join(os.homedir(), ".dsh-latest/profiles/web/node_modules/dsh-composer-live/package.json");
+const PROFILE_DIR = process.env.DSH_CL_E2E_PROFILE || T.profileDir; // 本地目录（绝不放网盘同步目录）
+const DST_PKG = process.env.DSH_CL_DST_PKG || T.dstPkg;
 const CHROME_CANDIDATES = [
 	"C:/Program Files/Google/Chrome/Application/chrome.exe",
 	"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
@@ -43,7 +76,9 @@ const CHROME_CANDIDATES = [
 	"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ];
 // INV-8 已知无害噪音（基线收集后维护；按子串匹配）
-const KNOWN_NOISE = [];
+// 020（0.2.0-rc.2）刷新页面时 sidebar.footer slot 的第三方插件渲染崩溃（官方错误边界
+// 兜住、无功能损失，CLAUDE.md 2026-10-01 定案的环境噪音，与 composer-live 无关）
+const KNOWN_NOISE = ["Minified React error #130"];
 
 const argv = process.argv.slice(2);
 const opt = {
@@ -59,26 +94,47 @@ const die = (s) => { console.error("失败: " + s); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- cookie ----------
-const cookieRaw = process.env.DSH_CL_AUTH_COOKIE
-	|| (() => { try { return fs.readFileSync(path.join(HERE, "cookie.txt"), "utf8"); } catch { return ""; } })();
-const cookiePairs = String(cookieRaw).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+// 优先级：环境变量 > cookie-<端口>.txt（8124 历史名 cookie.txt）> 自动获取（服务端对无
+// cookie 的本机请求直接在 Set-Cookie 发 30 天授权 cookie——0.1.5/0.2.0 均实测如此）。
+async function autoCookie() {
+	try {
+		const res = await fetch(BASE, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+		const list = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+		const pair = list.map((s) => s.split(";")[0]).find((s) => s.startsWith("dsh-auth-"));
+		if (pair) {
+			fs.writeFileSync(path.join(HERE, T.cookieFile), `# 自动获取（${new Date().toISOString()}）——服务端 Set-Cookie 直发\n${pair}\n`);
+			log(`自动获取鉴权 cookie 成功，已存 ${T.cookieFile}`);
+		}
+		return pair || "";
+	} catch { return ""; }
+}
+let cookiePairs = String(process.env.DSH_CL_AUTH_COOKIE || "")
+	.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 if (!cookiePairs.length) {
-	die(`缺少鉴权 cookie。获取方法：\n  用户浏览器打开 ${BASE} → F12 → 应用(Application) → Cookies → http://127.0.0.1:${PORT}\n  → 复制 dsh-auth- 开头那行的「名=值」→ 存入 ${path.join(HERE, "cookie.txt")}（每行一个，不进 git）\n  或临时用环境变量 DSH_CL_AUTH_COOKIE="名=值"`);
+	try { cookiePairs = fs.readFileSync(path.join(HERE, T.cookieFile), "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#")); } catch { /* 文件不存在 */ }
+}
+if (!cookiePairs.length) {
+	const pair = await autoCookie();
+	if (pair) cookiePairs = [pair];
+}
+if (!cookiePairs.length || !cookiePairs[0]) {
+	die(`缺少鉴权 cookie。获取方法：\n  用户浏览器打开 ${BASE} → F12 → 应用(Application) → Cookies → http://127.0.0.1:${PORT}\n  → 复制 dsh-auth- 开头那行的「名=值」→ 存入 ${path.join(HERE, T.cookieFile)}（每行一个，不进 git）\n  或临时用环境变量 DSH_CL_AUTH_COOKIE="名=值"`);
 }
 
 // ---------- 前置：部署 / 探活 / 版本 ----------
 if (opt.withDeploy) {
 	log("== 先部署（deploy.mjs）==");
-	const r = spawnSync(process.execPath, [path.join(ROOT, "deploy.mjs")], { stdio: "inherit" });
+	const r = spawnSync(process.execPath, [path.join(ROOT, "deploy.mjs"), "--target", targetKey], { stdio: "inherit" });
 	if (r.status !== 0) die("deploy.mjs 失败");
 }
 
 try {
 	const res = await fetch(BASE, { redirect: "manual", signal: AbortSignal.timeout(5000) });
 	if (![200, 303, 401].includes(res.status)) die(`${PORT} 探活异常（HTTP ${res.status}）`);
+	log(`目标 ${targetKey}（${T.label}）`);
 	log(`${PORT} 探活通过（HTTP ${res.status}）`);
 } catch (e) {
-	die(`${PORT} 未启动（${e.message}）。先跑 node ${path.join(ROOT, "deploy.mjs")} 或用 --with-deploy`);
+	die(`${PORT} 未启动（${e.message}）。先跑 node ${path.join(ROOT, "deploy.mjs")} --target ${targetKey} 或用 --with-deploy`);
 }
 
 const srcVer = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
@@ -186,6 +242,7 @@ async function ensureInpage() {
 async function waitForComposer(timeoutMs = 30000) {
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeoutMs) {
+		await dismissDialogs();
 		const st = await cdp.eval("(() => { var i = document.querySelector('[data-composer-input]'); return i ? { edit: i.getAttribute('contenteditable'), url: location.pathname } : null; })()");
 		if (st && st.edit === "true") return st;
 		await sleep(400);
@@ -197,6 +254,28 @@ async function waitForComposer(timeoutMs = 30000) {
 		fs.writeFileSync(f, Buffer.from(shot.data, "base64"));
 		die(`30s 等不到可编辑输入框（cookie 失效或落在工作区选择页？截图: ${f}）`);
 	} catch { die("30s 等不到可编辑输入框（cookie 失效或落在工作区选择页？）"); }
+}
+
+/** 关闭页面上开着的 modal 弹窗（0.2.0 对新 profile 首访弹「预览版说明」等 onboarding）。
+ * modal dialog 的焦点陷阱会把 input.focus()/execCommand/点击全部困住——020 基线
+ * 11 个失败全是它导致的环境伪影（2026-10-01 定位）。幂等，无弹窗时静默通过。 */
+async function dismissDialogs() {
+	for (let i = 0; i < 3; i++) {
+		const found = await cdp.eval(`(() => {
+			const dlgs = document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"]');
+			for (const d of dlgs) {
+				if (!d.getClientRects().length) continue; // 不可见
+				const btns = Array.from(d.querySelectorAll('button')).filter((b) => b.getClientRects().length);
+				const primary = btns.find((b) => /continue|继续|开始|got it|知道了|明白|ok|close|关闭/i.test((b.textContent || "") + " " + (b.getAttribute("aria-label") || "")))
+					|| btns[btns.length - 1]; // primary 习惯在右下
+				if (primary) { primary.click(); return "clicked:「" + String(primary.textContent || "").trim().slice(0, 24) + "」"; }
+			}
+			return "";
+		})()`);
+		if (!found) return;
+		log("关闭弹窗: " + found);
+		await sleep(900);
+	}
 }
 await waitForComposer();
 await ensureInpage();
@@ -233,6 +312,9 @@ for (const sc of todo) {
 	results.push(row);
 	try {
 		const cMark = cdp.consoleErrors.length;
+		// 视口控制：场景声明 viewport 则设置（窄视口软折行等），否则恢复默认
+		if (sc.viewport) await cdp.send("Emulation.setDeviceMetricsOverride", { width: sc.viewport.width, height: sc.viewport.height, deviceScaleFactor: 1, mobile: false });
+		else await cdp.send("Emulation.clearDeviceMetricsOverride");
 		await cdp.eval("window.__e2e.clearDraft()");
 		if (!(await waitStable())) row.unstable = true;
 
@@ -249,6 +331,11 @@ for (const sc of todo) {
 			await sleep(2000);
 			await waitForComposer();
 			await ensureInpage();
+		}
+		// 注入后改视口（resize 重渲染路径）：改完重稳定再校验
+		if (sc.resizeAfter) {
+			await cdp.send("Emulation.setDeviceMetricsOverride", { width: sc.resizeAfter.width, height: sc.resizeAfter.height, deviceScaleFactor: 1, mobile: false });
+			await sleep(600);
 		}
 		if (!(await waitStable())) row.unstable = true;
 
@@ -322,16 +409,16 @@ for (const r of results) for (const [k, v] of Object.entries(r.invs)) {
 	byInv[k].push(r.name);
 }
 const report = {
-	meta: { time: new Date().toISOString(), pluginVersion: srcVer, total: results.length, pass, fail, headed: opt.headed },
+	meta: { time: new Date().toISOString(), pluginVersion: srcVer, target: targetKey, port: PORT, total: results.length, pass, fail, headed: opt.headed },
 	byInv,
 	results,
 };
-fs.writeFileSync(path.join(HERE, "report-last.json"), JSON.stringify(report, null, 2));
-log(`\n======== 完成：${pass} 过 / ${fail} 失败（共 ${results.length}）========`);
+fs.writeFileSync(path.join(HERE, T.report), JSON.stringify(report, null, 2));
+log(`\n======== 完成：${pass} 过 / ${fail} 失败（共 ${results.length}，目标 ${targetKey}）========`);
 if (fail) {
 	log("按不变量分布：");
 	for (const [k, names] of Object.entries(byInv)) log(`  ${k}: ${names.length} 个场景（${names.slice(0, 5).join(", ")}${names.length > 5 ? "…" : ""}）`);
-	log(`明细见 ${path.join(HERE, "report-last.json")}`);
+	log(`明细见 ${path.join(HERE, T.report)}`);
 }
 if (!opt.keepBrowser) { try { chrome.kill(); } catch { /* 已退 */ } }
 process.exitCode = fail ? 1 : 0;

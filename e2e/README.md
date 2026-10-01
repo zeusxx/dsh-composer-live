@@ -1,13 +1,13 @@
 # E2E 测试体系
 
-单测（`test-live.cjs`）覆盖纯函数，测不了坐标、行距、视觉位置。E2E 套件在真实浏览器里对运行中的 DSH Web 实例测插件的真实视觉行为：**53 个场景 × 10 条不变量**。
+单测（`test-live.cjs`）覆盖纯函数，测不了坐标、行距、视觉位置。E2E 套件在真实浏览器里对运行中的 DSH Web 实例测插件的真实视觉行为：**62 个场景 × 10 条不变量**。改 `client.js` 后必跑。
 
 ## 组成
 
 | 文件 | 作用 |
 | --- | --- |
-| `run-e2e.mjs` | 主 runner：拉起独立 Chrome（默认 headless）→ CDP 直连被测页面 → 逐场景注入 → 校验不变量 → 报告 |
-| `scenarios.mjs` | 场景矩阵：基础场景 × 六种注入通道派生出 53 个场景 |
+| `run-e2e.mjs` | 主 runner：拉起独立 Chrome（默认 headless）→ CDP 直连被测页面 → 关闭弹窗 → 逐场景注入 → 校验不变量 → 报告 |
+| `scenarios.mjs` | 场景矩阵：基础场景 × 六种注入通道派生 + R 组（附件/撤销/视口/滚动） |
 | `inpage.js` | 页面内注入器 + 校验器：带一份**与插件独立的投影实现**交叉验证 |
 
 `diag-*.mjs` 系列是开发期一次性诊断脚本（定位特定 bug 用的取证工具），不属于测试套件。
@@ -16,19 +16,21 @@
 
 前置条件：
 
-1. 一个运行中的 DSH Web 实例（默认 `http://127.0.0.1:8124/`，环境变量 `DSH_CL_PORT` 改），且已部署当前源码（`--with-deploy` 会先跑部署）。
-2. 鉴权 cookie：浏览器打开实例 → DevTools → 应用 → Cookies → 复制 `dsh-auth-` 开头那行的「名=值」→ 存入本目录 `cookie.txt`（每行一个，**不进 git**），或临时用环境变量 `DSH_CL_AUTH_COOKIE="名=值"`。约 30 天失效，失效时 runner 会报错并给指引。
+1. 一个运行中的 DSH Web 实例（`--target 8124` 默认，或 `--target 020` 测 0.2.0 评估实例，端口 8123），且已部署当前源码（`--with-deploy` 会先跑部署）。
+2. 鉴权 cookie：**自动获取**——runner 直接 GET 根路径，服务端对无 cookie 的本机请求会在 Set-Cookie 里发一个 30 天授权 cookie（0.1.5/0.2.0 均如此），拿到自动存 `cookie-<端口>.txt` 复用。手动兜底（自动获取失败时）：浏览器打开实例 → DevTools → 应用 → Cookies → 复制 `dsh-auth-` 开头那行的「名=值」→ 存入 `cookie-8123.txt`（020）或 `cookie.txt`（8124），不进 git。
+3. 0.2.0 实例首访会弹「预览版说明」modal——它的焦点陷阱会让 `input.focus()`/`execCommand`/点击全部失效，**弹窗没关时的测试结果全部作废**。runner 已内置 `dismissDialogs` 自动点「继续」。
 
 ```bash
-node e2e/run-e2e.mjs --with-deploy   # 部署 + 重启实例 + 全场景回归（改动 client.js 后必跑）
-node e2e/run-e2e.mjs --only crlf     # 只跑名字含 "crlf" 的场景
-node e2e/run-e2e.mjs --headed        # 有头模式，人工观察
-node e2e/run-e2e.mjs --diag-dy       # 输出 INV-3 超差字符的坐标偏移诊断
+node e2e/run-e2e.mjs --target 020 --with-deploy   # 部署 + 重启 020 + 全场景回归
+node e2e/run-e2e.mjs --target 8124 --with-deploy  # 同款，主力实例（重启前跟用户打招呼）
+node e2e/run-e2e.mjs --only crlf                  # 只跑名字含 "crlf" 的场景
+node e2e/run-e2e.mjs --headed                     # 有头模式，人工观察
+node e2e/run-e2e.mjs --diag-dy                    # 输出 INV-3 超差字符的坐标偏移诊断
 ```
 
-可配置项（环境变量，均有默认值）：`DSH_CL_PORT`（端口）、`DSH_CL_E2E_PROFILE`（E2E 专用 Chrome profile 目录，勿放网盘同步目录）、`DSH_CL_DST_PKG`（部署副本路径，版本对照用）。
+可配置项（环境变量，均有默认值）：`DSH_CL_PORT`（端口）、`DSH_CL_E2E_PROFILE`（E2E 专用 Chrome profile 目录，勿放网盘同步目录）、`DSH_CL_DST_PKG`（部署副本路径，版本对照用）、`DSH_CL_TARGET`（同 `--target`）。
 
-报告输出到 `report-last.json` + 控制台摘要；失败场景截图存 `fail-*.png`（均不进 git）。
+报告输出按目标分文件：`report-last.json`（8124）/ `report-last-020.json`（020）+ 控制台摘要；失败场景截图存 `fail-*.png`（均不进 git）。退出码全绿 0 / 有失败 1。
 
 ## 场景矩阵
 
@@ -41,12 +43,18 @@ node e2e/run-e2e.mjs --diag-dy       # 输出 INV-3 超差字符的坐标偏移�
 5. 合成 paste
 6. 刷新恢复（多 `<p>` 形态，刷新页面走草稿持久化）
 
-基础场景分组（B/C/F/Q）：
+基础场景分组：
 
+- **A** 基础形态（LF/CRLF/空行密集/通道基准/刷新恢复）
 - **B** 行结构：br 与字面换行交替、中途插行、行首插入
 - **C** 代码块与行内格式：未闭合围栏、加粗包裹等
-- **F** 打字流：中途插字、退格、删整行、caret 密集采样、追加、头部插入、软折行
+- **D** 超长行软折行（中文/URL/混排）
+- **E** 特殊字符（emoji/制表符/行尾空格/孤立 \r）
+- **F** 打字流：中途插字、退格、删整行、caret 密集采样、追加、头部插入
+- **G** 粘贴通道：富文本 HTML、纯文本长段、代码包围栏
 - **Q** 键盘流（合成按键走插件捕获层 + 投影断言）：引用/列表续项、Tab 缩进/嵌套/反缩进、Ctrl+B 包裹、表格补全、任务列表样式、选区块缩进
+- **H** 长度梯度与 CRLF 大文本
+- **R** 附件/撤销/视口/滚动（2026-10-01 新增）：图片附件在场（打字渲染、长文本滚动、@ 候选菜单贴边——v0.2.6-0.2.8 三个附件 bug 的回归）、全选替换+Ctrl+Z 撤销、Ctrl+Y 重做、窄视口软折行、注入后改视口、长文滚动工具栏 sticky 钉顶、空文档基线
 
 ## 十条不变量
 
@@ -59,7 +67,7 @@ node e2e/run-e2e.mjs --diag-dy       # 输出 INV-3 超差字符的坐标偏移�
 | 5 | **段健康**：无空段；有内容且透明化激活时必有渲染段 |
 | 6 | **行距均匀**：「多余空白」探测器，软换行感知公式（unit×(视觉行差+行号差)） |
 | 7 | **caret 几何**：collapsed selection 的 rect 落在期望字符位置（采样多点） |
-| 8 | **console 干净**：场景期间无新增 console 错误（runner 侧 CDP 收集，维护已知噪音白名单） |
+| 8 | **console 干净**：场景期间无新增 console 错误（runner 侧 CDP 收集，维护已知噪音白名单——020 的 sidebar.footer React #130） |
 | 9 | **兜底状态**：有内容时「透明化中且有段」或「已回退官方显示」二居其一（不许半透明无渲染的中间态） |
 | 10 | **chip 行降级**：@ 胶囊在场时编辑器段落 KEEP 原样显示在位 |
 
@@ -71,5 +79,6 @@ node e2e/run-e2e.mjs --diag-dy       # 输出 INV-3 超差字符的坐标偏移�
 ## 运行纪律
 
 - **只动草稿，绝不发送**——E2E 永不在真实工作区发消息。
-- 每场景测完自动清空草稿。
+- 每场景测完自动清空草稿（跑之前确认用户没有未发送的重要草稿）。
 - `--with-deploy` 会重启被测实例，共享该实例的人在场时慎用。
+- 同一 Chrome profile 不能并发跑两个 runner。

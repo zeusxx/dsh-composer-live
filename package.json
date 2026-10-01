@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-live",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "DSH Web 0.1.5+ 输入框增强（Lexical contenteditable 架构版）：markdown 实时渲染 + 代码块语法高亮/段落级等宽 + 格式工具栏（常驻顶条 + 选区浮动条）+ 70vh 展开 + 大段粘贴包代码块 + Esc 分发。纯浏览器端插件，零依赖，不改官方源码。仿 Open WebUI 输入体验。",
   "type": "module",
   "main": "index.js",

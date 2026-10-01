@@ -305,4 +305,82 @@ export const SCENARIOS = [
 	{ name: "H3-len-200", group: "H", channel: "bi-text", text: () => plainLines(200, "\n"), focus: "性能/稳定窗" },
 	{ name: "H4-crlf-200", group: "H", channel: "bi-text", text: () => plainLines(200, "\r\n"), focus: "CRLF 大文本" },
 	{ name: "H5-refresh-crlf-200", group: "H", channel: "bi-text", refresh: true, text: () => plainLines(120, "\r\n"), focus: "刷新+CRLF 大文本" },
+
+	// ===== R 附件/撤销/全选/视口/滚动（2026-10-01 扩充：真实用户场景的覆盖缺口） =====
+	// v0.2.6-0.2.8 的三个附件 bug（菜单悬空/工具栏盖图/滚动透明）都出自附件场景，
+	// 此前矩阵却没有附件场景——R1-R3 补上；R4-R5 补撤销重做；R6-R8 补视口与滚动；
+	// R9 空文档基线。attachImage/detachImages/toolbarClear/scrollToolbar/menuNearInput
+	// 见 inpage.js op 注释。
+	{
+		name: "R1-image-attach-basic", group: "R", focus: "附件在场打字渲染+工具栏让位",
+		channel: "bi-text", text: () => plainLines(8, "\n"),
+		ops: [
+			{ type: "attachImage" },
+			{ type: "toolbarClear" },
+			{ type: "caret", off: null },
+			{ type: "type", text: "附件下方继续打字" },
+			{ type: "detachImages" },
+			{ type: "toolbarClear" },
+		],
+	},
+	{
+		name: "R2-image-attach-long", group: "R", focus: "附件+长文本滚动",
+		channel: "bi-text", text: () => plainLines(60, "\n"),
+		ops: [
+			{ type: "attachImage" },
+			{ type: "toolbarClear" },
+			{ type: "detachImages" },
+		],
+	},
+	{
+		name: "R3-attach-menu", group: "R", focus: "附件在场 @ 候选菜单贴输入框（v0.2.6 回归）",
+		channel: "bi-text", text: () => plainLines(3, "\n"),
+		ops: [
+			{ type: "attachImage" },
+			{ type: "caret", off: null },
+			{ type: "menuNearInput", text: "@" },
+			{ type: "detachImages" },
+		],
+	},
+	{
+		name: "R4-selectall-replace-undo", group: "R", focus: "全选替换+Ctrl+Z 撤销恢复",
+		channel: "bi-text", text: () => plainLines(20, "\n"),
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "type", text: "全部替换后的新内容" },
+			{ type: "expectSrc", expect: "全部替换后的新内容" },
+			{ type: "key", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: plainLines(20, "\n") },
+		],
+	},
+	{
+		name: "R5-undo-redo", group: "R", focus: "Ctrl+Z 撤销 + Ctrl+Y 重做",
+		channel: "bi-text", text: () => plainLines(10, "\n"),
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "type", text: "替换后" },
+			{ type: "key", key: "z", ctrl: true },
+			{ type: "key", key: "y", ctrl: true },
+			{ type: "expectSrc", expect: "替换后" },
+		],
+	},
+	{
+		name: "R6-narrow-softwrap", group: "R", focus: "窄视口软折行重排",
+		channel: "bi-text", viewport: { width: 760, height: 720 },
+		text: () => `前置说明\n${CJK_300}\n${MIXED_LONG}\n后置说明`,
+	},
+	{
+		name: "R7-resize-after", group: "R", focus: "注入后改视口（resize 重渲染路径）",
+		channel: "bi-text", resizeAfter: { width: 860, height: 700 },
+		text: () => plainLines(60, "\n"),
+	},
+	{
+		name: "R8-scroll-toolbar-sticky", group: "R", focus: "长文滚动工具栏钉视口顶（v0.2.8 回归）",
+		channel: "bi-text", text: () => plainLines(200, "\n"),
+		ops: [{ type: "scrollToolbar", amount: 900 }, { type: "toolbarClear" }],
+	},
+	{
+		name: "R9-empty-state", group: "R", focus: "空文档基线（透明化关闭态）",
+		channel: "bi-text", text: () => "",
+	},
 ];
