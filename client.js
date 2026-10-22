@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
 		/** 「停止生成」按钮 aria-label（i18n 双语；实测校正清单见 README）。 */
 		const STOP_BTN_HINTS = ["停止生成", "Stop generating", "停止"];
 		/** 工具栏高度 + 呼吸（占位同步值）。 */
-		const BAR_RESERVE = "6px"; // v0.2.8：sticky 工具栏在流内占 38px，编辑器 padding 只留呼吸（原 absolute 方案的 44px 占位退役）
+		const TB_HEIGHT = "36px"; // v0.2.14：卡外独立条高度（原卡内 sticky 的 38px + BAR_RESERVE 让位整体退役）
 		//#endregion
 
 		//#region dsh-composer-live: 安全工具
@@ -434,7 +434,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 字符锚定渲染主入口：清空 overlay，按测量坐标输出「整块背景 + 定位字符段」。 */
-		function renderCharOverlay(ov, input, anchors, lines, states) {
+		function renderCharOverlay(ov, input, anchors, lines, states, refs) {
 			const ovRect = ov.getBoundingClientRect();
 			const ox = ovRect.left, oy = ovRect.top;
 			const segLineHeight = getComputedStyle(ov).lineHeight; // 段定位的 half-leading 修正用
@@ -446,6 +446,10 @@ window.__ModuleLoader__.load({
 			const contentLeft = inpRect.left + pl - 12;
 			const contentW = inpRect.width - pl - pr + 24;
 			let out = "";
+			// 每行在投影文本中的起始 offset（refs 区间按绝对 offset 匹配字符）
+			const lineStarts = [];
+			let lineAcc = 0;
+			for (const l of lines) { lineStarts.push(lineAcc); lineAcc += l.length + 1; }
 			// ===== 块级背景（代码块整块一个矩形：垂直无缝；引用段同理） =====
 			// 逐行画背景会按行内容宽度锯齿 + 行间露缝——聚合到块级：从块首行首字符顶
 			// 到块末行末字符底 ±2.5px，水平取容器内容宽。块内空行天然被矩形覆盖。
@@ -502,6 +506,20 @@ window.__ModuleLoader__.load({
 				for (const tk of tokens) {
 					const tl = tk.text.length;
 					for (let k = 0; k < tl && ci < chars.length; k++, ci++) charCls[ci] = tk.cls;
+				}
+				// 官方文本引用装饰（/ 命令、技能名）→ 引用色。编辑器文字透明，官方给
+				// 装饰 span 的 color 看不见；按投影区间在渲染层补上同一主题色。
+				if (refs.length) {
+					const base = lineStarts[li] || 0;
+					for (let k = 0; k < chars.length; k++) {
+						const abs = base + chars[k].off;
+						for (const r of refs) {
+							if (abs >= r.start && abs < r.end) {
+								charCls[k] = (charCls[k] ? charCls[k] + " " : "") + "dsh-cl-ref";
+								break;
+							}
+						}
+					}
 				}
 				// 合并「同样式 + 同视觉行 + 横向连续」的字符成段（段内浏览器排版同字体零差）。
 				// 等宽整框语义：文档含代码块时全部段用等宽合成栈（与编辑器 MONO_ALL 同源变量）。
@@ -822,18 +840,13 @@ window.__ModuleLoader__.load({
 		function styleText() {
 			return (
 				"#" + STYLE_ID + "{}" +
-				// 常驻工具栏（absolute 横贯输入卡顶部）：占位由 input/placeholder 的
-				// padding-top 同步让出（overlay 的 padding 每次渲染从 input 复制）。
-				"." + TOOLBAR + "{position:sticky;top:0;left:0;right:0;z-index:60;display:flex;align-items:center;box-sizing:border-box;height:38px;padding:0 10px;gap:2px;background:rgba(28,30,36,.95);border-bottom:1px solid rgba(127,127,127,.16);}" +
-				// sticky 工具栏钉滚动视口顶（v0.2.8）：内容从其下方滚过永不重叠；附件栏在
-				// 滚动容器外，scroll 顶=附件栏底，天然让位（v0.2.7 的让位变量退役）。背景色
-				// 必须不透明——滚动内容从下方经过（实测反馈「工具栏透明」问题的根治）。
-				"body.dsh-cl-light ." + TOOLBAR + "{background:rgba(250,251,253,.97);border-bottom-color:rgba(0,0,0,.08);}" +
+				// 常驻工具栏（v0.2.14：输入卡外、卡正上方的独立条）：不再占输入框内部
+				// 高度——编辑器 padding 让位（v0.2.8 的 BAR_RESERVE）随 sticky 体系整体
+				// 退役；宽度由搬正逻辑从 card 同步（父容器内容宽 ≠ card 宽，width:100%
+				// 会比卡突出）。背景不透明（沿用 v0.2.8 教训：透底会与后方内容混色）。
+				"." + TOOLBAR + "{display:flex;align-items:center;box-sizing:border-box;height:" + TB_HEIGHT + ";padding:0 12px;gap:2px;margin:0 0 6px;border-radius:12px;background:rgba(28,30,36,.95);box-shadow:rgba(0,0,0,.25) 0px 1px 8px 0px;}" +
+				"body.dsh-cl-light ." + TOOLBAR + "{background:rgba(250,251,253,.97);box-shadow:rgba(61,55,48,.125) 0px 0px 0px 0.5px,rgba(0,0,0,.04) 0px 1px 8px 0px;}" +
 				"." + TOOLBAR + " [data-cl=\"expand\"]{margin-left:auto;}" +
-				
-				// 编辑层与占位层让出工具栏一行（38px 工具栏 + 6px 呼吸）
-				CARD_SEL + " " + INPUT_SEL + "{padding-top:" + BAR_RESERVE + " !important;}" +
-				CARD_SEL + " " + PLACEHOLDER_SEL + "{padding-top:" + BAR_RESERVE + " !important;box-sizing:border-box;}" +
 				// 透明化：只隐藏文字「绘制」（-webkit-text-fill-color），color 属性保留
 				// ——caret 颜色、官方 hint ::after、chip 恢复全靠 color 不动。
 				// 提层：编辑器自身 z-index:1 画在 overlay（z:0）之上——caret/选区是编辑器
@@ -905,6 +918,12 @@ window.__ModuleLoader__.load({
 				// 字符段：绝对定位画在编辑器字符 rect 上；字体继承 overlay（syncMetrics
 				// 复制官方度量）；样式类只改 paint（伪粗/染色/胶囊背景外扩），零 advance 变化。
 				".dsh-cl-c{position:absolute;white-space:pre;pointer-events:none;color:inherit;font-family:inherit;}" +
+				// 官方文本引用装饰（/ 命令、技能名）：渲染层用同一主题引用色。
+				// 编辑器层文字已透明，官方给装饰 span 的 color 看不见（此前显示为
+				// 普通正文色）；hover 背景同样在编辑器层（z-index:1，画在 overlay
+				// 之上），会整块盖住渲染文字——禁掉，常驻引用色已足够辨识。
+				".dsh-cl-c.dsh-cl-ref{color:var(--dsw-alias-state-business-primary,#3b82f6);}" +
+				INPUT_SEL + "." + HOST + " " + TEXT_REF_SEL + ":hover{background:transparent !important;}" +
 				".dsh-cl-c.dsh-cl-codefont{font-family:var(--dsh-cl-code-font,var(--ds-font-family-code,monospace));}" +
 				".dsh-cl-c.dsh-cl-strong,.dsh-cl-c.dsh-cl-heading{font-weight:inherit;-webkit-text-stroke:.45px currentColor;}" +
 				".dsh-cl-c.dsh-cl-em{font-style:italic;}" +
@@ -1025,6 +1044,9 @@ window.__ModuleLoader__.load({
 		 */
 		function buildAnchors(input) {
 			const anchors = [];
+			// 官方文本引用装饰（[data-composer-text-ref]，0.2.x 用于 / 命令与技能名）的
+			// 投影区间：渲染层据此给字符上引用色（编辑器文字已透明，官方 color 不可见）。
+			const refs = [];
 			if (!input) return anchors;
 			let firstPara = true;
 			const visit = (node) => {
@@ -1046,6 +1068,15 @@ window.__ModuleLoader__.load({
 							continue;
 						}
 						if (c.matches && c.matches(CHIP_HOST_SEL)) { anchors.push({ kind: "chip", el: c, len: 1 }); continue; }
+						if (c.matches && c.matches(TEXT_REF_SEL)) {
+							// 引用/命令装饰：内容仍是普通文本（非原子 chip），记录投影区间
+							// 供渲染层染色；文本照常下钻进锚表。
+							const start = anchorsText(anchors).length;
+							visit(c);
+							const end = anchorsText(anchors).length;
+							if (end > start) refs.push({ start, end });
+							continue;
+						}
 						// 其余元素（B/I/STRONG/DIV 等富文本粘贴产物、装饰壳）一律继续
 						// 下钻收集文字——「忽略内容」会把粘贴的富文本结构整个漏掉：锚表
 						// 空转 → 渲染层空白 + 透明化已生效 = 大段粘贴「一片空白」（文字
@@ -1055,6 +1086,7 @@ window.__ModuleLoader__.load({
 				}
 			};
 			visit(input);
+			anchors.refs = refs;
 			return anchors;
 		}
 
@@ -1253,7 +1285,7 @@ window.__ModuleLoader__.load({
 				fallbackToOfficial();
 			} else {
 				try {
-					renderCharOverlay(ov, input, anchors, lines, states);
+					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || []);
 					if (hasContent && ov.querySelectorAll(".dsh-cl-c").length === 0) fallbackToOfficial();
 				} catch (err) {
 					fallbackToOfficial();
@@ -1429,13 +1461,25 @@ window.__ModuleLoader__.load({
 			const input = card.querySelector(INPUT_SEL);
 			if (!input) return;
 
-			if (card.getAttribute(READY_KEY) !== "1" && !card.querySelector("." + TOOLBAR)) {
+			if (card.getAttribute(READY_KEY) !== "1") {
 				card.setAttribute(READY_KEY, "1");
 				const scroll = card.querySelector(SCROLL_SEL);
 				if (scroll) scroll.classList.add("dsh-cl-anchor");
 
+				// 卡外工具栏复用（v0.2.14）：card 重建（hero 切换/会话切换/官方重挂）后，
+				// 旧工具栏仍留在 card 的父容器里——不能建第二份，找到即接管，
+				// __dshClToolbar/__dshClBtns 指向既有节点（按钮闭包一律 findCard() 现查，
+				// 无需重绑监听）。
+				let toolbar = card.parentElement ? card.parentElement.querySelector("." + TOOLBAR) : null;
+				if (toolbar) {
+					card.__dshClToolbar = toolbar;
+					card.__dshClBtns = {};
+					for (const b of toolbar.querySelectorAll(".dsh-cl-btn")) {
+						if (b.dataset.cl) card.__dshClBtns[b.dataset.cl] = b;
+					}
+				} else {
 				// 常驻格式工具栏（6 格式键 + 展开键）
-				const toolbar = document.createElement("div");
+				toolbar = document.createElement("div");
 				toolbar.className = TOOLBAR;
 				toolbar.setAttribute("role", "toolbar");
 				toolbar.setAttribute("aria-label", "格式工具栏");
@@ -1474,7 +1518,9 @@ window.__ModuleLoader__.load({
 				expandBtn.innerHTML = iconSvg("expand");
 				expandBtn.addEventListener("mousedown", (ev) => ev.preventDefault());
 				expandBtn.addEventListener("click", () => {
-					const s = card.querySelector(SCROLL_SEL);
+					// 现查 card：工具栏跨 card 重建存活（复用），闭包里的 card 可能已换实例
+					const c = findCard();
+					const s = c && c.querySelector(SCROLL_SEL);
 					if (!s) return;
 					const on = s.classList.toggle(EXPANDED);
 					expandBtn.classList.toggle("dsh-cl-active", on);
@@ -1482,8 +1528,8 @@ window.__ModuleLoader__.load({
 					expandBtn.innerHTML = iconSvg(on ? "collapse" : "expand");
 				});
 				toolbar.appendChild(expandBtn);
-				card.__dshClToolbar = toolbar; // 只创建不挂载——sticky 需挂进滚动容器，见下方 grow 块
-				// 挂载延后到 grow（sticky 需在滚动容器内，与 overlay 同一安全位置）
+				card.__dshClToolbar = toolbar; // 只创建不挂载——卡外挂载见下方搬正逻辑
+				} // else（新建工具栏）结束
 
 				// 选区浮动格式条（body 级 fixed）
 				const floatBar = document.createElement("div");
@@ -1684,6 +1730,19 @@ window.__ModuleLoader__.load({
 				}, true);
 			}
 
+			// 卡外工具栏搬正（v0.2.14）：挂 card 的父容器、card 前一格——输入卡外正上方。
+			// 未挂载/被 React 重排挤错位（官方重建 children 时不认识外来节点）都拉回；
+			// 宽度从 card 同步（父容器内容宽 ≠ card 宽，CSS width:100% 会比卡突出），
+			// 有差异才写 style，避免每次 run 都触发样式失效。
+			const tb = card.__dshClToolbar || (card.parentElement && card.parentElement.querySelector("." + TOOLBAR));
+			if (tb && card.parentElement && (tb.parentElement !== card.parentElement || tb.nextElementSibling !== card)) {
+				card.parentElement.insertBefore(tb, card);
+			}
+			if (tb) {
+				const w = card.offsetWidth + "px";
+				if (tb.style.width !== w) tb.style.width = w;
+			}
+
 			// 确保 overlay 与哨兵在位（插在编辑层之前，画在其下不挡光标）
 			const grow = input.parentElement;
 			if (grow) {
@@ -1694,9 +1753,6 @@ window.__ModuleLoader__.load({
 					ov.setAttribute("aria-hidden", "true");
 					grow.insertBefore(ov, input);
 				}
-				// sticky 工具栏进滚动容器（在 overlay 前）：未挂载或挂错位置都搬正
-				const tb = card.__dshClToolbar || card.querySelector("." + TOOLBAR);
-				if (tb && (tb.parentElement !== grow || tb.nextElementSibling !== ov)) grow.insertBefore(tb, ov);
 				if (!card.__dshClSentinel || !card.__dshClSentinel.isConnected) {
 					const s = document.createElement("div");
 					s.className = SENTINEL;
@@ -1802,8 +1858,10 @@ window.__ModuleLoader__.load({
 						}
 						if (card.__dshClFloat) { card.__dshClFloat.remove(); card.__dshClFloat = null; }
 						card.removeAttribute(READY_KEY);
-						const tb = card.querySelector("." + TOOLBAR);
+						// v0.2.14：工具栏在 card 外（父容器内），先引用/父容器找，找不到再全局兜底
+						const tb = card.__dshClToolbar || (card.parentElement && card.parentElement.querySelector("." + TOOLBAR));
 						if (tb) tb.remove();
+						card.__dshClToolbar = null;
 						const input = card.querySelector(INPUT_SEL);
 						if (input) {
 							input.classList.remove(HOST, MONO_ALL);
@@ -1820,6 +1878,8 @@ window.__ModuleLoader__.load({
 					}
 					const s = document.getElementById(STYLE_ID);
 					if (s) s.remove();
+					// 卡外工具栏全局兜底：card 已随会话切换消失时上面的引用清不到
+					document.querySelectorAll("." + TOOLBAR).forEach((el) => el.remove());
 				};
 			});
 		}

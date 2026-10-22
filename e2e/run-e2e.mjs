@@ -66,7 +66,9 @@ const CHROME_CANDIDATES = [
 // INV-8 已知无害噪音（基线收集后维护；按子串匹配）
 // dsh 0.2.0-rc.2 刷新页面时 sidebar.footer slot 第三方插件的 React #130 渲染崩溃（官方
 // 错误边界兜住、无功能损失，与本插件无关）
-const KNOWN_NOISE = ["Minified React error #130"];
+// dsh-cost-meter（2026-10-05 装 8124）页面加载期注册 conversation.chat.turnTail slot 未传
+// options.select，0.1.5 chain slot API 直接 throw——注册期一次、无功能损失，与本插件无关
+const KNOWN_NOISE = ["Minified React error #130", 'chain slot "conversation.chat.turnTail" requires options.select'];
 
 const argv = process.argv.slice(2);
 const opt = {

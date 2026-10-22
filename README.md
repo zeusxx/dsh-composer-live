@@ -55,7 +55,7 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 
 ### Toolbars and shortcuts
 
-- **Sticky top toolbar**: B / italic / code / link / list / code block / expand. Wraps the selection, or inserts empty markers at the caret; B lights up when the caret sits inside `**…**`. The bar is pinned to the top of the scroll area, so it never overlaps content or image attachments.
+- **Format toolbar (outside the composer card since v0.2.14)**: B / italic / code / link / list / code block / expand. Wraps the selection, or inserts empty markers at the caret; B lights up when the caret sits inside `**…**`. The bar is a standalone strip directly above the composer card, card-aligned width, taking no space inside the input area — it never overlaps content or image attachments.
 - **Selection floating format bar** (Open WebUI style): select text and B/italic/code/link appear above the selection.
 - **Ctrl+B / Ctrl+I / Ctrl+E** for bold / italic / inline code — which also blocks the browser's native contenteditable bold that would silently insert real `<b>` tags into the draft.
 
@@ -68,7 +68,7 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 - **Esc** does the right thing in context: open candidate menus → official handler; expanded composer → collapse; generation in progress → stop generating.
 - One-key **70vh expand** for long-form writing.
 - Light/dark theme aware; IME-safe (composition input never flashes); rendering is rAF-batched and incremental.
-- **@ mention chips** stay official and editable. Paragraphs containing chips gracefully degrade to official rendering (chip widths cannot be replicated; zero misalignment wins). Text decorations are unaffected.
+- **@ mention chips** stay official and editable. Paragraphs containing chips gracefully degrade to official rendering (chip widths cannot be replicated; zero misalignment wins). Text decorations are unaffected — `/` commands and skill-name references are painted in the official reference colour, and the official hover background is disabled (it paints above the render layer and would cover the text).
 - Also fixes two official positioning glitches when image attachments are present: the trigger menu floating far above the composer, and toolbars overlapping thumbnails.
 
 ### Not duplicated from DSH 0.1.5

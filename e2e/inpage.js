@@ -349,7 +349,7 @@
 		} else if (o.type === "detachImages") {
 			return await detachImages(ci);
 		} else if (o.type === "toolbarClear") {
-			var tb = ci.card.querySelector(".dsh-cl-toolbar");
+			var tb = document.querySelector(".dsh-cl-toolbar"); // v0.2.14：工具栏在输入卡外
 			if (!tb) return { ok: false, got: "no-toolbar" };
 			var tr = tb.getBoundingClientRect();
 			var worst = null;
@@ -363,9 +363,20 @@
 			}
 			if (worst) return { ok: false, got: "工具栏与附件重叠 " + JSON.stringify(worst) };
 		} else if (o.type === "scrollToolbar") {
-			var tb2 = ci.card.querySelector(".dsh-cl-toolbar");
+			// v0.2.14 语义：工具栏在输入卡外正上方——断言「卡外位置正确」+
+			// 「输入内容滚动时输入区（工具栏+输入框）整体固定不漂移」
+			var tb2 = document.querySelector(".dsh-cl-toolbar");
 			if (!tb2) return { ok: false, got: "no-toolbar" };
-			var sc = null, n2 = tb2.parentElement;
+			var crd = ci.card.getBoundingClientRect();
+			var tr2 = tb2.getBoundingClientRect();
+			var overlapX = tr2.right > crd.left + 4 && tr2.left < crd.right - 4;
+			var gapAbove = crd.top - tr2.bottom;
+			if (tb2.parentElement !== ci.card.parentElement || tb2.nextElementSibling !== ci.card) return { ok: false, got: "工具栏不在 card 前一格（parent/sibling 不符）" };
+			if (!overlapX || gapAbove < 0 || gapAbove > 14) return { ok: false, got: "工具栏不在卡正上方 overlapX=" + overlapX + " gap=" + gapAbove.toFixed(1) };
+			var wDiff = Math.abs(tb2.offsetWidth - ci.card.offsetWidth);
+			if (wDiff > 2) return { ok: false, got: "工具栏宽 " + tb2.offsetWidth + " ≠ 卡宽 " + ci.card.offsetWidth };
+			// 滚动输入内容（编辑器滚动容器从 input 祖先找），输入区应纹丝不动
+			var sc = null, n2 = input.parentElement;
 			while (n2 && n2 !== document.body) {
 				var st = getComputedStyle(n2);
 				if (/(auto|scroll)/.test(st.overflowY) && n2.scrollHeight > n2.clientHeight + 4) { sc = n2; break; }
@@ -373,15 +384,15 @@
 			}
 			if (!sc) return { ok: false, got: "no-scroll-container（内容不够长？）" };
 			var tbBefore = tb2.getBoundingClientRect().top;
-			var cBefore = input.getBoundingClientRect().top;
+			var cBefore = crd.top;
 			sc.scrollTop = Math.min(sc.scrollTop + (o.amount || 800), sc.scrollHeight - sc.clientHeight);
 			await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
 			await new Promise(function (r) { setTimeout(r, 120); });
 			var tbAfter = tb2.getBoundingClientRect().top;
 			var cAfter = input.getBoundingClientRect().top;
-			var sticky = Math.abs(tbAfter - tbBefore) < 2; // 工具栏钉视口顶不动
-			var scrolled = (cBefore - cAfter) > 50;        // 内容确实滚上去了
-			if (!sticky || !scrolled) return { ok: false, got: "sticky=" + sticky + " scrolled=" + scrolled + " 工具栏 top " + tbBefore.toFixed(1) + "→" + tbAfter.toFixed(1) + " 内容位移 " + (cBefore - cAfter).toFixed(1) + "px" };
+			var fixedTb = Math.abs(tbAfter - tbBefore) < 2; // 工具栏不随内容滚
+			var fixedCard = Math.abs(cAfter - cBefore) < 2; // 输入卡不随内容滚
+			if (!fixedTb || !fixedCard) return { ok: false, got: "fixedTb=" + fixedTb + " fixedCard=" + fixedCard + " 工具栏 top " + tbBefore.toFixed(1) + "→" + tbAfter.toFixed(1) + " 卡 top " + cBefore.toFixed(1) + "→" + cAfter.toFixed(1) };
 		} else if (o.type === "menuNearInput") {
 			document.execCommand("insertText", false, String(o.text || "@"));
 			await new Promise(function (r) { setTimeout(r, o.wait || 1500); });

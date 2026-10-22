@@ -375,7 +375,7 @@ export const SCENARIOS = [
 		text: () => plainLines(60, "\n"),
 	},
 	{
-		name: "R8-scroll-toolbar-sticky", group: "R", focus: "长文滚动工具栏钉视口顶（v0.2.8 回归）",
+		name: "R8-toolbar-outside-card", group: "R", focus: "卡外工具栏位置/等宽 + 长文滚动输入区固定（v0.2.14 回归）",
 		channel: "bi-text", text: () => plainLines(200, "\n"),
 		ops: [{ type: "scrollToolbar", amount: 900 }, { type: "toolbarClear" }],
 	},

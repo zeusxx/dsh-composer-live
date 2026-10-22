@@ -27,13 +27,15 @@
 浏览器半的组成：
 
 ```
+┌─ 格式工具栏 .dsh-cl-toolbar（v0.2.14 起挂在输入卡外、卡正上方——
+│   card 父容器内 card 前一格，宽度从 card 同步，不占输入框内部高度）
+│
 ┌─ 官方输入卡 [data-composer-card]
 │   ┌─ 官方 Lexical 编辑器 [data-composer-input]（contenteditable）
 │   │     真实文字：-webkit-text-fill-color:transparent（透明但仍在排版）
 │   │     position:relative; z-index:1（caret/选区盖在渲染层之上）
 │   ├─ 渲染层 .dsh-cl-live（自建，pointer-events:none，z-index:0）
 │   │     逐字符定位在编辑器文字的真实坐标上
-│   └─ 格式工具栏（sticky，挂在滚动容器内）
 │
 ├─ 键盘捕获层：[data-composer-card] capture 阶段，先于官方 Lexical keymap
 └─ 数据源：直接读编辑器 DOM → 投影文本（零服务注入）
@@ -161,7 +163,7 @@ dsh 0.1.5 前端是 CSS Modules——类名全带随机 hash（每次构建变�
 
 同理，对官方**布局**的适配也用几何法而非类名：图片附件在场时的工具栏让位靠「检测编辑器外的 img → 向上找全宽祖先取底边」，官方 DOM 怎么改都不失效。
 
-顺带兜底的两个官方定位问题（均为几何法）：图片附件在场时候选菜单悬空（官方菜单 absolute + `bottom:4px` 锚定不感知附件栏——bottom 锚定下 margin 零位移、top 与 bottom 同设会拉伸，只有 `transform: translateY` 与官方零冲突且天然幂等收敛）；工具栏盖附件缩略图（根治 = 工具栏挂进滚动容器 + `position:sticky; top:0`，附件栏在滚动容器外，sticky 天然让位）。
+顺带兜底的两个官方定位问题（均为几何法）：图片附件在场时候选菜单悬空（官方菜单 absolute + `bottom:4px` 锚定不感知附件栏——bottom 锚定下 margin 零位移、top 与 bottom 同设会拉伸，只有 `transform: translateY` 与官方零冲突且天然幂等收敛）；工具栏盖附件缩略图（v0.2.8 曾用「挂进滚动容器 + sticky」根治，**v0.2.14 起工具栏整体迁到输入卡外正上方，与卡内附件栏物理分层，天然无重叠**；宽度从 `card.offsetWidth` 同步而非 CSS `width:100%`——父容器内容宽 ≠ card 宽）。
 
 ## 8. 等宽字体体系
 

@@ -2,6 +2,26 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.15（2026-10-18）
+
+**输入 `/` 命令/技能名时文字无颜色、hover 被色块遮挡（用户 0.2.1 实测反馈）。**
+
+- **根因**：0.2.x 官方把 `/anatomy` 这类技能命令识别为「文本引用装饰」`[data-composer-text-ref]`——span 带 `color: var(--dsw-alias-state-business-primary)`（主题引用色）与 `:hover { background: var(--dsw-alias-state-business-tertiary) }`。插件把编辑器文字 `-webkit-text-fill-color: transparent` 后由 overlay 重绘，装饰的 `color` 因此不可见（文字显示为普通正文色）；而 hover 背景留在编辑器层（`z-index: 1`，画在 overlay 之上），会整块盖住渲染文字。
+- **修法**：`buildAnchors` 记录 `[data-composer-text-ref]` 的投影区间（挂在 `anchors.refs`），`renderCharOverlay` 按绝对 offset 给对应字符加 `dsh-cl-ref` class，颜色取同一主题变量 `--dsw-alias-state-business-primary`（明暗主题自动跟随，取不到时回退 `#3b82f6`）；同时注入 `[data-composer-text-ref]:hover { background: transparent !important }` 禁掉编辑器层 hover 背景，杜绝遮挡。
+- 单测 188 项通过。
+
+## 0.2.14（2026-10-06）
+
+**工具栏迁出输入卡：放卡外正上方，不再占输入框内部空间（用户反馈「工具栏阻碍输入框空间」）。**
+
+- **DOM 位置**：`.dsh-cl-toolbar` 从「输入卡内、编辑器滚动容器顶部（v0.2.8 sticky）」迁到「card 的父容器内、card 前一格」——输入卡外、正上方，视觉为与卡等宽的独立细条（36px 高、圆角 12px、明暗两套底色阴影、与卡 6px 间距）。编辑器 padding-top 让位（v0.2.8 的 BAR_RESERVE 6px）随 sticky 体系整体退役，输入框恢复官方原始内距。
+- **宽度同步**：父容器（`uV2eYG_root`，flex column + align-items:flex-start）内容宽 ≠ card 宽，CSS `width:100%` 会比卡突出——搬正逻辑每次从 `card.offsetWidth` 同步（有差异才写，避免每次 run 触发样式失效）。
+- **card 重建防双份**：工具栏跨 card 重建存活（hero 切换/会话切换后旧工具栏仍留在父容器），setupCard 先查父容器复用（接管 `__dshClToolbar`/`__dshClBtns` 引用）再谈新建；expand 按钮闭包改 `findCard()` 现查（格式键本就现查）。卸载清理改引用直取 + `document.querySelectorAll` 全局兜底（card 已消失时父容器查找清不到）。
+- **React 重排自愈**：官方重建父容器 children 时不认识外来节点，工具栏可能被挤错位——搬正逻辑（每次 setupCard/run 跑）持续拉回 card 前一格。
+- **代价说明**：工具栏卡外后占文档流 36px，消息区可视高度相应少 36px（消息区自身可滚动，内容无损）。
+- E2E：`scrollToolbar` op 重写为「卡外位置 + 与卡等宽 + 长文滚动时输入区（工具栏+输入框）整体固定」断言（旧 sticky 钉顶语义退役）；`toolbarClear` 查找范围从 card 内改 document 级。场景 R8 更名 `R8-toolbar-outside-card`。
+- 单测 188 项通过；8124（0.1.5-rc.2）E2E 全绿后发布。
+
 ## 0.2.13（2026-10-01）
 
 **发布仓库隐私整改 + E2E 工具通用化（插件本体零改动）。**
