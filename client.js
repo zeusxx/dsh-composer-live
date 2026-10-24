@@ -398,47 +398,99 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 逐行逐字符测量编辑器 rect。返回 lineChars[行] = [{off(行内偏移), x, y, w, h}]；
-		 * chip 跳过（其所在行整段降级官方显示）。
+		 * 逐行逐字符测量编辑器 rect（v0.2.17 起行级缓存）。返回 lineChars[行] =
+		 * [{off(行内偏移), x, y, w, h, voff(可见序，\\r 不占位)}]；chip 行返回空数组
+		 * （其所在行整段降级官方显示，测量数据无消费方——原版也测了但没人用）。
+		 *
+		 * 缓存（打字路径的核心优化：200 行文档全量测量 ≈3000 次 getBoundingClientRect
+		 * ≈30-60ms/帧，实测打字掉到 6fps）：行的字符 rect 只依赖「行文本 + 行起点 +
+		 * 字体 + 容器几何」。key = 行文本；布局代（字体栈/容器几何/主题）变化时整体
+		 * 作废。命中后仍验证行首字符的 x/y——前面的行折行数变化会平移本行起点（文本
+		 * 没变位置变了），验证不过就重测该行。验证成本 1 次 rect/行（300 行文档从
+		 * 3000 次测量降到 ~300 次）。同文本多行（空行/重复行）共享 key 互相顶替 →
+		 * 各自全测，无害。
 		 */
-		function measureAnchorChars(anchors, lineCount) {
+		function measureAnchorChars(anchors, lineCount, cache, layoutGen) {
+			const useCache = !!(cache && layoutGen);
+			if (useCache && cache.gen !== layoutGen) { cache.gen = layoutGen; cache.lines.clear(); }
 			const range = document.createRange();
-			const lineChars = [];
-			for (let i = 0; i < lineCount; i++) lineChars.push([]);
-			let lineIdx = 0;
-			let off = 0; // 行内字符偏移
+			// 第一遍（零测量）：把锚流切成分段的「行」（seg = 文本节点内的字符区间），
+			// 同时拼出行文本（缓存 key）。行边界 = br/para 锚 + 文本节点内字面 \n。
+			const rows = [[]];
+			const texts = [""];
+			let off = 0; // 行内投影偏移（与原版语义一致：字面 \n 后 = 0 - i - 1，使行内后续字符 off 归零）
 			for (const a of anchors) {
-				if (a.kind === "br" || a.kind === "para") { lineIdx++; off = 0; continue; }
-				if (a.kind === "chip") { off++; continue; }
+				if (a.kind === "br" || a.kind === "para") { rows.push([]); texts.push(""); off = 0; continue; }
+				if (a.kind === "chip") { off++; texts[texts.length - 1] += "￼"; continue; }
 				const node = a.node;
 				if (!node || node.nodeType !== Node.TEXT_NODE) { continue; }
 				const len = node.nodeValue.length;
-				// 逐锚容错：大段粘贴/批量编辑期间 DOM 可能正被 Lexical 重建，个别
-				// 节点测量抛错时跳过该锚（下一轮渲染自愈），不让整个渲染中断。
-				// 文本节点内的字面 \n 必须推进行号（与 src.split("\n") 的行边界
-				// 一致）——粘贴的大段文本正是「单节点含字面 \n」形态（官方 paste
-				// 管线 insertText 不转 br），不推进会导致 chars 全记到第 0 行而
-				// lines 已被切多行 → charAt 越界 → 渲染段全空 →「一片空白」。
-				try {
-					for (let i = 0; i < len; i++) {
-						if (node.nodeValue.charCodeAt(i) === 10) { lineIdx++; off = 0 - i - 1; continue; }
-						range.setStart(node, i);
-						range.setEnd(node, i + 1);
-						const r = range.getBoundingClientRect();
-						if (r) lineChars[lineIdx].push({ off: off + i, x: r.left, y: r.top, w: r.width, h: r.height });
+				let segStart = 0;
+				for (let i = 0; i < len; i++) {
+					// 字面 \n 推进行号（与 src.split("\n") 行边界一致——粘贴大段文本正是
+					// 「单节点含字面 \n」形态，不推进会 chars 全记第 0 行 → 渲染段全空）。
+					if (node.nodeValue.charCodeAt(i) === 10) {
+						if (segStart < i) {
+							rows[rows.length - 1].push({ node, from: segStart, to: i, base: off + segStart });
+							texts[texts.length - 1] += node.nodeValue.slice(segStart, i);
+						}
+						rows.push([]); texts.push(""); off = 0 - i - 1; segStart = i + 1;
 					}
-				} catch (err) { /* 跳过该锚 */ }
+				}
+				if (segStart < len) {
+					rows[rows.length - 1].push({ node, from: segStart, to: len, base: off + segStart });
+					texts[texts.length - 1] += node.nodeValue.slice(segStart);
+				}
 				off += len;
 			}
+			// 第二遍：逐行缓存判定 → 命中直接用；miss 全行测量并回填。
+			const lineChars = [];
+			for (let li = 0; li < lineCount; li++) {
+				const row = li < rows.length ? rows[li] : null;
+				const text = li < texts.length ? texts[li] : null;
+				let chars = null;
+				if (useCache && row && row.length) {
+					const m = cache.lines.get(text);
+					if (m && m.length) {
+						const s0 = row[0];
+						try {
+							range.setStart(s0.node, s0.from);
+							range.setEnd(s0.node, s0.from + 1);
+							const pr = range.getBoundingClientRect();
+							if (pr && Math.abs(pr.top - m[0].y) < 0.5 && Math.abs(pr.left - m[0].x) < 0.5) chars = m;
+						} catch (err) { /* 验证失败 → 全行重测 */ }
+					}
+				}
+				if (!chars) {
+					chars = [];
+					if (row) {
+						// 逐段容错：批量编辑期间 DOM 可能正被 Lexical 重建，个别节点测量
+						// 抛错时跳过该段（下一轮渲染自愈），不让整个渲染中断。
+						for (const seg of row) {
+							try {
+								for (let i = seg.from; i < seg.to; i++) {
+									range.setStart(seg.node, i);
+									range.setEnd(seg.node, i + 1);
+									const r = range.getBoundingClientRect();
+									if (r) chars.push({ off: seg.base + i - seg.from, x: r.left, y: r.top, w: r.width, h: r.height });
+								}
+							} catch (err) { /* 跳过该段 */ }
+						}
+					}
+					if (useCache && chars.length) cache.lines.set(text, chars);
+				}
+				lineChars.push(chars);
+			}
+			if (useCache && cache.lines.size > 800) cache.lines.clear(); // 上限防泄漏（长会话删行残留）
 			return lineChars;
 		}
 
 		/** 字符锚定渲染主入口：清空 overlay，按测量坐标输出「整块背景 + 定位字符段」。 */
-		function renderCharOverlay(ov, input, anchors, lines, states, refs) {
+		function renderCharOverlay(ov, input, anchors, lines, states, refs, cache, layoutGen) {
 			const ovRect = ov.getBoundingClientRect();
 			const ox = ovRect.left, oy = ovRect.top;
 			const segLineHeight = getComputedStyle(ov).lineHeight; // 段定位的 half-leading 修正用
-			const lineChars = measureAnchorChars(anchors, lines.length);
+			const lineChars = measureAnchorChars(anchors, lines.length, cache, layoutGen);
 			// 容器内容区（块背景的水平范围——统一宽度消灭按行宽的锯齿）
 			const inpRect = input.getBoundingClientRect();
 			const ics = getComputedStyle(input);
@@ -1221,7 +1273,8 @@ window.__ModuleLoader__.load({
 			input.classList.toggle(HOST, editable);
 			if (!editable) {
 				ov.innerHTML = "";
-				ov.__dshClLineCache = null;
+				card.__dshClRenderSig = "";
+				card.__dshClLineCache = null;
 				return;
 			}
 			const anchors = buildAnchors(input);
@@ -1241,6 +1294,34 @@ window.__ModuleLoader__.load({
 				}
 			}
 
+			// 度量与主题（v0.2.17 上移到短路点之前：主题色是签名的组成部分）
+			const scrollEl0 = card.querySelector(SCROLL_SEL);
+			const color0 = syncMetrics(input, ov);
+			if (scrollEl0) {
+				scrollEl0.classList.toggle("dsh-cl-light", isLightColor(color0));
+				document.body.classList.toggle("dsh-cl-light", isLightColor(color0));
+			}
+
+			// ===== 渲染签名短路（v0.2.17 性能优化的核心） =====
+			// 视觉输出只依赖：内容(src) + 光标行(围栏高亮) + 几何（相对 overlay——渲染
+			// 输出本身用相对坐标，滚动时字符与 overlay 视口坐标同步变化、差值不变，用
+			// 相对量保证滚动零重渲染）+ 字体栈 + 主题色。全部相同 → 逐字符测量与
+			// innerHTML 重建整体跳过（只更新随精确光标变的工具栏高亮）。idle 轮询 /
+			// selectionchange / 页面 DOM 噪音路径的无效全量渲染由此消除（优化前 200 行
+			// 文档空闲实测 16 次/秒全量 × ~60ms = 98% 主线程占用、打字 6fps）。
+			const irx = input.getBoundingClientRect();
+			const orx = ov.getBoundingClientRect();
+			const renderSig = [src, cursorLine, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0].join("\u0000");
+			if (card.__dshClRenderSig === renderSig) {
+				updateToolbarMarks(card, src, caret);
+				card.__dshClCaret = caret;
+				return;
+			}
+			card.__dshClRenderSig = renderSig;
+			if (!card.__dshClLineCache) card.__dshClLineCache = { gen: "", lines: new Map() };
+			// 行测量缓存的布局代：字体/容器几何/主题任一变化 → 行缓存整体作废
+			const layoutGen = [card.__dshClFontSig || "", Math.round(irx.width), Math.round(irx.left - orx.left), color0].join("|");
+
 			// 编辑器 class（打点在测量前——等宽打点影响布局，先定型再测量）：
 			// - KEEP（chip 段恢复）段落级
 			// - 等宽「整框」级：文档含已闭合代码块 → input 整框切等宽、渲染全段同栈
@@ -1257,13 +1338,7 @@ window.__ModuleLoader__.load({
 			const hasCode = states.some((st) => st.inCode);
 			input.classList.toggle(MONO_ALL, hasCode);
 
-			// 度量与主题（字符渲染的字体继承 overlay——syncMetrics 复制的度量仍是基准）
-			const scrollEl = card.querySelector(SCROLL_SEL);
-			const color = syncMetrics(input, ov);
-			if (scrollEl) {
-				scrollEl.classList.toggle("dsh-cl-light", isLightColor(color));
-				document.body.classList.toggle("dsh-cl-light", isLightColor(color));
-			}
+			// 度量与主题段已于签名短路点之前执行（color 是签名组成部分）
 
 			// 字符锚定渲染：逐字符测量编辑器 rect，渲染字符绝对定位画在同一坐标。
 			// 三类兜底（都回退官方显示——移除透明化，保证任何情况都有文字可读；
@@ -1279,28 +1354,34 @@ window.__ModuleLoader__.load({
 				input.classList.remove(MONO_ALL);
 				input.querySelectorAll("." + KEEP).forEach((el) => el.classList.remove(KEEP));
 				ov.innerHTML = "";
+				card.__dshClRenderSig = ""; // 兜底态不入签名（下一轮重判）
 			};
 			const hasContent = input.textContent.replace(/￼/g, "").trim() !== "";
 			if (hasContent && src.replace(/￼/g, "").trim() === "") {
 				fallbackToOfficial();
 			} else {
 				try {
-					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || []);
+					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || [], card.__dshClLineCache, layoutGen);
 					if (hasContent && ov.querySelectorAll(".dsh-cl-c").length === 0) fallbackToOfficial();
 				} catch (err) {
 					fallbackToOfficial();
 				}
 			}
 
-			// 工具栏高亮
+			// 工具栏高亮（随精确光标位置变化——独立于签名，同行移动也更新）
+			updateToolbarMarks(card, src, caret);
+			card.__dshClSrc = src;
+			card.__dshClCaret = caret;
+		}
+
+		/** 工具栏格式键高亮（依赖精确 caret——与重渲染签名解耦，selectionchange 轻路径用）。 */
+		function updateToolbarMarks(card, src, caret) {
 			if (card.__dshClBtns && caret != null) {
 				const marks = decideActiveMarks(src, caret);
 				for (const kind in card.__dshClBtns) {
 					card.__dshClBtns[kind].classList.toggle("dsh-cl-active", marks.indexOf(kind) !== -1);
 				}
 			}
-			card.__dshClSrc = src;
-			card.__dshClCaret = caret;
 		}
 		//#endregion
 
@@ -1847,12 +1928,23 @@ window.__ModuleLoader__.load({
 					};
 				};
 
-				// MutationObserver 回调 rAF 合帧：每次击键 Lexical 的 DOM commit 会
-				// 触发多次 observer 回调（文本+结构），同步跑 render 会造成每键多次
-				// 渲染 + 强制布局（「抖动」感来源之一）——合并到下一帧只跑一次。
+				// MutationObserver 回调 rAF 合帧 + card 过滤（v0.2.17）：每次击键 Lexical
+				// 的 DOM commit 会触发多次 observer 回调（文本+结构），合并到下一帧只跑
+				// 一次；**只认发生在输入卡内的变更**——观察的是整个 body，dsh 页面上
+				// 其它组件（skin-center/cost-meter/React 渲染）的 DOM 活动会高频触发
+				// 回调，不过滤的话页面噪音全部转化为本插件的全量渲染（优化前实测空闲
+				// 16 次/秒）。card 外的变化由 500ms 兜底轮询覆盖（card 重建等场景）。
 				let obsRaf = 0;
-				const observer = new MutationObserver(() => {
+				const observer = new MutationObserver((muts) => {
 					if (obsRaf) return;
+					const cardNow = findCard();
+					if (cardNow) {
+						let hit = false;
+						for (let i = 0; i < muts.length; i++) {
+							if (cardNow.contains(muts[i].target)) { hit = true; break; }
+						}
+						if (!hit) return;
+					}
 					obsRaf = requestAnimationFrame(() => { obsRaf = 0; run(); });
 				});
 				observer.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -1865,6 +1957,11 @@ window.__ModuleLoader__.load({
 				};
 				window.addEventListener("resize", onResize);
 
+				// selectionchange（v0.2.17 加 rAF 合帧）：拖选/光标移动时该事件以指针
+				// 级频率触发，直接同步 render 会造成每帧多次全量渲染（优化前拖选 20 次
+				// 扩选实测 75 次渲染）——合帧 + render 内的签名短路（光标同行移动不重
+				// 渲染，仅更新工具栏高亮）。
+				let selRaf = 0;
 				const onSelChange = () => {
 					const card = findCard();
 					if (!card) return;
@@ -1873,8 +1970,9 @@ window.__ModuleLoader__.load({
 						if (card.__dshClFloat) card.__dshClFloat.classList.remove("dsh-cl-float-on");
 						return;
 					}
-					render(card);
 					if (card.__dshClFloat) updateFloat(card, card.__dshClFloat);
+					if (selRaf) return;
+					selRaf = requestAnimationFrame(() => { selRaf = 0; const c = findCard(); if (c) render(c); });
 				};
 				document.addEventListener("selectionchange", onSelChange);
 
@@ -1892,6 +1990,7 @@ window.__ModuleLoader__.load({
 				return () => {
 					delete window.__dshClDebug;
 					clearInterval(timer);
+					if (selRaf) cancelAnimationFrame(selRaf);
 					observer.disconnect();
 					window.removeEventListener("resize", onResize);
 					document.removeEventListener("selectionchange", onSelChange);
