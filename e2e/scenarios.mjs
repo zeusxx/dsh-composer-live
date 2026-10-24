@@ -78,6 +78,14 @@ const CJK_300 = "字符锚定渲染验证".repeat(43); // 301 字无空格中文
 const LONG_URL = "https://example.com/" + "path".repeat(60) + "/end?query=" + "abc".repeat(30) + "#frag";
 const MIXED_LONG = ("Mixed中英" + "English words ".repeat(8) + "中文词语").repeat(12);
 
+// S/W/X/D/U/P 组共用的固定素材与断言生成器（2026-10-24 扩充）
+const CJK30 = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"; // 30 字单行
+const CJK20 = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸"; // 20 字
+const THREE_LINES = ["第一行内容甲乙丙", "第二行内容丁戊己", "第三行内容庚辛壬"].join("\n"); // 投影 26 字
+const THREE_LINES_PROJ = THREE_LINES; // bi-lines(br) 与 bi-text(字面\n) 两形态投影同构，别名以示语义
+/** 选区包裹断言：s.slice(from,to) 前后加标记（默认 **） */
+const wrapSel = (s, from, to, mark = "**") => s.slice(0, from) + mark + s.slice(from, to) + mark + s.slice(to);
+
 // ---------- 场景矩阵 ----------
 export const SCENARIOS = [
 	// ===== A 基础形态 =====
@@ -333,11 +341,12 @@ export const SCENARIOS = [
 		],
 	},
 	{
-		name: "R3-attach-menu", group: "R", focus: "附件在场 @ 候选菜单贴输入框（v0.2.6 回归）",
+		name: "R3-attach-menu", group: "R", focus: "附件在场 @ 候选菜单贴输入框（v0.2.6 回归；skipOn 8124——0.1.5 的 input-trigger 无法以 trusted 事件触发，仅 020 真测；光标行首——官方 @ 触发要求前邻空白/行首，标点后不弹）",
+		skipOn: ["8124"],
 		channel: "bi-text", text: () => plainLines(3, "\n"),
 		ops: [
 			{ type: "attachImage" },
-			{ type: "caret", off: null },
+			{ type: "caret", off: 0 },
 			{ type: "menuNearInput", text: "@" },
 			{ type: "detachImages" },
 		],
@@ -382,5 +391,688 @@ export const SCENARIOS = [
 	{
 		name: "R9-empty-state", group: "R", focus: "空文档基线（透明化关闭态）",
 		channel: "bi-text", text: () => "",
+	},
+
+	// ===== S/W/X/D/U/P 六组（2026-10-24 扩充：日常操作的多样性覆盖）=====
+	// 背景：用户报「打一串字→选中中间一段→Ctrl+B→后面的字消失」，62 场景矩阵没抓住
+	// （唯一的 Q6 恰好全选/尾部，对选区时序竞争不敏感）。扩充原则：
+	//   S = 同一目标（选中一段加粗）用用户所有可能的选择/按键方式各来一遍
+	//   W = 格式快捷键的位置与形态变体（行中/行尾/跨行/嵌套/撤销…）
+	//   X = 真实打字通道（CDP trusted——合成 beforeinput 逐字符实测只进 1 字，不可用）
+	//   D = 删除的日常变体（选中删/替换删/删词/跨行合并）
+	//   U = 撤销重做链（格式化后的恢复语义）
+	//   P = 刷新多 p / 粘贴通道的格式化
+	// 断言核心 = expectSrc 精确内容（一个字都不能丢）。
+
+	// ===== S 选择方式 × Ctrl+B（全部选同一段 [10,20)，期望一字不丢） =====
+	{
+		name: "S1-mid-select-synthkey", group: "S", focus: "程序选区+合成键（用户 bug 主靶：选区后 4 字消失）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "key", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "S2-mid-select-trustedkey", group: "S", focus: "程序选区+trusted 键",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "S3-mouse-drag-trustedkey", group: "S", focus: "真实鼠标拖选+trusted 键",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "mouseSelect", from: 10, to: 20 },
+			{ type: "expectSel", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "S4-mouse-drag-synthkey", group: "S", focus: "真实鼠标拖选+合成键",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "mouseSelect", from: 10, to: 20 },
+			{ type: "key", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "S5-shiftarrow-extend", group: "S", focus: "Shift+方向键扩选（trusted）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "caret", off: 10 },
+			{ type: "cdpKey", key: "ArrowRight", shift: true, hold: 30 },
+			{ type: "cdpKey", key: "ArrowRight", shift: true, hold: 30 },
+			{ type: "cdpKey", key: "ArrowRight", shift: true, hold: 30 },
+			{ type: "cdpKey", key: "ArrowRight", shift: true, hold: 30 },
+			{ type: "cdpKey", key: "ArrowRight", shift: true, hold: 30 },
+			{ type: "expectSel", from: 10, to: 15 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 15) },
+		],
+	},
+	{
+		name: "S6-dblclick-word", group: "S", focus: "词级选择加粗（双击语义；CDP 双击在 headless 不触发原生词选择，用 selectWord 程序化词选择覆盖插件行为）",
+		channel: "bi-text", text: () => "甲乙 hello world 丙丁 tail",
+		ops: [
+			{ type: "caret", off: 4 },
+			{ type: "selectWord" },
+			{ type: "expectSel", from: 3, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "甲乙 **hello** world 丙丁 tail" },
+		],
+	},
+	{
+		name: "S7-shiftclick-extend", group: "S", focus: "程序锚点+Shift+点击扩选",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "caret", off: 10 },
+			{ type: "shiftClick", at: 16 },
+			{ type: "expectSel", from: 10, to: 16 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 16) },
+		],
+	},
+	{
+		name: "S8-selectall-bold", group: "S", focus: "Ctrl+A 全选加粗",
+		channel: "bi-text", text: () => CJK20,
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "**" + CJK20 + "**" },
+		],
+	},
+	{
+		name: "S9-select-tail", group: "S", focus: "选结尾段（A5 形态）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 20, to: 30 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 20, 30) },
+		],
+	},
+	{
+		name: "S10-select-head", group: "S", focus: "选开头段（A6 形态）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 0, to: 10 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 0, 10) },
+		],
+	},
+	{
+		name: "S11-selectline-bold", group: "S", focus: "行选择加粗（多行文本选一行）",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "caretRatio", ratio: 0.05 },
+			{ type: "selectLine" },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "**" + THREE_LINES.split("\n")[0] + "**" + "\n" + THREE_LINES.split("\n").slice(1).join("\n") },
+		],
+	},
+	{
+		name: "S12-para-select-bold", group: "S", focus: "段落级选择加粗（三击选段语义；CDP 三击在 headless 不触发原生段选择，用程序化选段覆盖——三击本体入 L2 手工清单）",
+		channel: "bi-text", refresh: true, text: () => CJK20 + "\n第二行内容",
+		ops: [
+			{ type: "selectRange", from: 0, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "**" + CJK20 + "**\n第二行内容" },
+		],
+	},
+	{
+		name: "S13-stress-mid-bold", group: "S", focus: "时序压力：选中间加粗 ×12（rAF/setTimeout 竞争探测器）",
+		channel: "bi-text", text: () => "",
+		ops: [{ type: "stressWrap", text: CJK30, from: 10, to: 20, key: "b", mark: "**", rounds: 12 }],
+	},
+	{
+		name: "S14-stress-linetail", group: "S", focus: "时序压力：行尾边界加粗 ×8",
+		channel: "bi-text", text: () => "",
+		ops: [{ type: "stressWrap", text: THREE_LINES, from: 4, to: 8, key: "b", mark: "**", rounds: 8 }],
+	},
+	{
+		name: "S15-stress-crossline", group: "S", focus: "时序压力：跨行选区加粗 ×8",
+		channel: "bi-text", text: () => "",
+		ops: [{ type: "stressWrap", text: THREE_LINES, from: 4, to: 14, key: "b", mark: "**", rounds: 8 }],
+	},
+	{
+		name: "W21-stress-italic", group: "W", focus: "时序压力：选中间斜体 ×8",
+		channel: "bi-text", text: () => "",
+		ops: [{ type: "stressWrap", text: CJK30, from: 10, to: 20, key: "i", mark: "*", rounds: 8 }],
+	},
+
+	// ===== W 格式快捷键形态变体 =====
+	{
+		name: "W1-bold-crossline-br", group: "W", focus: "跨行选区加粗（br 形态）",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 14 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 14) },
+		],
+	},
+	{
+		name: "W2-bold-crossline-literalnl", group: "W", focus: "跨行选区加粗（字面 \\n 形态——C1 靶）",
+		channel: "bi-text", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 14 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 14) },
+		],
+	},
+	{
+		name: "W3-bold-linetail-boundary", group: "W", focus: "选区终点恰在行尾（B5 靶：丢 \\n+下 行首）",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 8) },
+		],
+	},
+	{
+		name: "W4-bold-linetail-boundary-literal", group: "W", focus: "行尾边界（字面 \\n 形态）",
+		channel: "bi-text", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 8) },
+		],
+	},
+	{
+		name: "W5-caretstate-bold-type", group: "W", focus: "光标态 Ctrl+B 插空标记+打字",
+		channel: "bi-text", text: () => CJK20,
+		ops: [
+			{ type: "caret", off: 10 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: CJK20.slice(0, 10) + "****" + CJK20.slice(10) },
+			{ type: "type", text: "重点" },
+			{ type: "expectSrc", expect: CJK20.slice(0, 10) + "**重点**" + CJK20.slice(10) },
+		],
+	},
+	{
+		name: "W6-bold-then-type-tail", group: "W", focus: "加粗后光标落段尾、续打追加（不再选中整段防误替换）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+			{ type: "type", text: "尾注" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "**" + CJK30.slice(10, 20) + "**尾注" + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "W7-two-segments", group: "W", focus: "连续两段加粗（第二段 offset 修正 +4）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 15 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 15) },
+			{ type: "selectRange", from: 24, to: 29 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(wrapSel(CJK30, 10, 15), 24, 29) },
+		],
+	},
+	{
+		name: "W8-nested-bold", group: "W", focus: "已有 bold 段再选整段再包（嵌套语义=现状）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "selectRange", from: 10, to: 24 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "****" + CJK30.slice(10, 20) + "****" + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "W9-italic-mid", group: "W", focus: "Ctrl+I 选中间",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "i", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20, "*") },
+		],
+	},
+	{
+		name: "W10-code-mid", group: "W", focus: "Ctrl+E 行内码选中间",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "e", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20, "`") },
+		],
+	},
+	{
+		name: "W11-bold-then-italic", group: "W", focus: "B 后同段再 I（链式格式）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "selectRange", from: 10, to: 24 },
+			{ type: "cdpKey", key: "i", ctrl: true },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "***" + CJK30.slice(10, 20) + "***" + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "W12-select-marks", group: "W", focus: "选区含 ** 标记字符加粗（字符保全）",
+		channel: "bi-text", text: () => "甲乙**丙丁**戊己",
+		ops: [
+			{ type: "selectRange", from: 2, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "甲乙" + "****丙丁****" + "戊己" },
+		],
+	},
+	{
+		name: "W13-select-emoji", group: "W", focus: "选区含 emoji（代理对 offset）",
+		channel: "bi-text", text: () => "甲🎉乙丙🎊丁",
+		ops: [
+			{ type: "selectRange", from: 1, to: 7 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "甲**🎉乙丙🎊**丁" },
+		],
+	},
+	{
+		name: "W14-selectall-italic", group: "W", focus: "全选 Ctrl+I",
+		channel: "bi-text", text: () => CJK20,
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpKey", key: "i", ctrl: true },
+			{ type: "expectSrc", expect: "*" + CJK20 + "*" },
+		],
+	},
+	{
+		name: "W15-selectall-code", group: "W", focus: "全选 Ctrl+E",
+		channel: "bi-text", text: () => CJK20,
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpKey", key: "e", ctrl: true },
+			{ type: "expectSrc", expect: "`" + CJK20 + "`" },
+		],
+	},
+	{
+		name: "W16-bold-in-list", group: "W", focus: "列表行内选中加粗",
+		channel: "bi-text", text: () => "- 列表项目甲乙丙丁戊己庚辛",
+		ops: [
+			{ type: "selectRange", from: 4, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "- 列表" + "**项目甲乙**" + "丙丁戊己庚辛" },
+			{ type: "expectClass", selector: ".dsh-cl-lmark" },
+		],
+	},
+	{
+		name: "W17-bold-in-quote", group: "W", focus: "引用行内选中加粗",
+		channel: "bi-text", text: () => "> 引用内容甲乙丙丁戊己庚辛",
+		ops: [
+			{ type: "selectRange", from: 4, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "> 引用" + "**内容甲乙**" + "丙丁戊己庚辛" },
+			{ type: "expectClass", selector: ".dsh-cl-qmark" },
+		],
+	},
+	{
+		name: "W18-bold-undo-restore", group: "W", focus: "加粗后 Ctrl+Z 一次恢复原文",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: CJK30 },
+		],
+	},
+	{
+		name: "W19-crossline-bold-undo", group: "W", focus: "跨行加粗（两端补标记=2 条撤销）后撤销恢复原文",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 14 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 14) },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: THREE_LINES_PROJ },
+		],
+	},
+	{
+		name: "W20-typechars-channel", group: "W", focus: "typeChars 逐字符（execCommand）+选段加粗",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "typeChars", text: CJK20 },
+			{ type: "expectSrc", expect: CJK20 },
+			{ type: "selectRange", from: 5, to: 12 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK20, 5, 12) },
+		],
+	},
+
+	// ===== X 真实打字通道（CDP trusted insertText）=====
+	{
+		name: "X1-cdptype-then-bold", group: "X", focus: "trusted 逐字打字+选中间加粗（用户流主场景）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: CJK30, chars: true, interval: 15 },
+			{ type: "expectSrc", expect: CJK30 },
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "X2-type-correct-bold", group: "X", focus: "打字→Backspace 改正→选段加粗（完整日常流）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: "一二三四五六七八九十甲乙丙丁错戊己", chars: true, interval: 10 },
+			{ type: "caret", off: 15 },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "cdpType", text: "对" },
+			{ type: "expectSrc", expect: "一二三四五六七八九十甲乙丙丁对戊己" },
+			{ type: "selectRange", from: 10, to: 15 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "一二三四五六七八九十**甲乙丙丁对**戊己" },
+		],
+	},
+	{
+		name: "X3-type-undo-redo", group: "X", focus: "打字后撤销/重做",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: CJK20 },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: "" },
+			{ type: "cdpKey", key: "y", ctrl: true },
+			{ type: "expectSrc", expect: CJK20 },
+		],
+	},
+	{
+		name: "X4-type-multiline-crossline", group: "X", focus: "打字出多行+跨行选段加粗",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: THREE_LINES },
+			{ type: "expectSrc", expect: THREE_LINES_PROJ },
+			{ type: "selectRange", from: 4, to: 14 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 14) },
+		],
+	},
+	{
+		name: "X5-type-selectall-replace", group: "X", focus: "打字+全选+打字替换",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: CJK20 },
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpType", text: "全部替换" },
+			{ type: "expectSrc", expect: "全部替换" },
+		],
+	},
+	{
+		name: "X6-type-select-delete", group: "X", focus: "打字+选段 Backspace 删除",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: CJK30 },
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "X7-type-select-typereplace", group: "X", focus: "打字+选段+打字替换",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: CJK30 },
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpType", text: "替换" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "替换" + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "X8-type-long-render", group: "X", focus: "trusted 打字 30 行（INV 全套）",
+		channel: "bi-text", text: () => "",
+		ops: [{ type: "cdpType", text: plainLines(30, "\n"), chars: true, interval: 5 }],
+	},
+	{
+		name: "X9-type-emoji-mixed", group: "X", focus: "trusted 打字 emoji 混排+选段",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: "甲🎉乙丙🎊丁戊", chars: true, interval: 10 },
+			{ type: "selectRange", from: 1, to: 7 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "甲**🎉乙丙🎊**丁戊" },
+		],
+	},
+	{
+		name: "X10-type-tab-bold", group: "X", focus: "打字+Tab 缩进+选段加粗",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "cdpType", text: "- 列表甲乙丙丁" },
+			{ type: "caret", off: null },
+			{ type: "enter", shift: true },
+			{ type: "tab" },
+			{ type: "cdpType", text: "子项内容" },
+			{ type: "expectSrc", expect: "- 列表甲乙丙丁\n  - 子项内容" },
+			{ type: "selectRange", from: 4, to: 8 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "- 列表**甲乙丙丁**\n  - 子项内容" },
+		],
+	},
+
+	// ===== D 删除的日常变体 =====
+	{
+		name: "D1-select-backspace", group: "D", focus: "选中段 Backspace",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "backspace" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "D2-select-deletekey", group: "D", focus: "选中段 Delete 前向删（trusted）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "Delete" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "D3-select-typereplace", group: "D", focus: "选中段打字替换（execCommand）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "type", text: "替换词" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "替换词" + CJK30.slice(20) },
+		],
+	},
+	{
+		name: "D4-ctrlbackspace-word", group: "D", focus: "光标处 Ctrl+Backspace 删词（trusted）",
+		channel: "bi-text", text: () => "甲乙 hello world 丙丁",
+		ops: [
+			{ type: "caret", off: 14 },
+			{ type: "cdpKey", key: "Backspace", ctrl: true },
+			{ type: "expectSrc", expect: "甲乙 hello  丙丁" },
+		],
+	},
+	{
+		name: "D5-linestart-backspace-merge", group: "D", focus: "行首 Backspace 跨行合并（br 删除路径）",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "caret", off: 9 },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectSrc", expect: THREE_LINES_PROJ.slice(0, 8) + THREE_LINES_PROJ.slice(9) },
+		],
+	},
+	{
+		name: "D6-linetail-delete-forward", group: "D", focus: "行尾 Delete 前向合并下一行",
+		channel: "bi-lines", text: () => THREE_LINES,
+		ops: [
+			{ type: "caret", off: 8 },
+			{ type: "cdpKey", key: "Delete" },
+			{ type: "expectSrc", expect: THREE_LINES_PROJ.slice(0, 8) + THREE_LINES_PROJ.slice(9) },
+		],
+	},
+	{
+		name: "D7-selectall-backspace", group: "D", focus: "全选 Backspace 清空",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectSrc", expect: "" },
+		],
+	},
+	{
+		name: "D8-bold-then-delete", group: "D", focus: "加粗后选中删除（格式化+删除组合）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "selectRange", from: 12, to: 22 },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20).slice(0, 12) + wrapSel(CJK30, 10, 20).slice(22) },
+		],
+	},
+	{
+		name: "D9-select-delete-then-paste", group: "D", focus: "选中段删除后光标处粘贴",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + CJK30.slice(20) },
+			{ type: "cdpType", text: "粘入" },
+			{ type: "expectSrc", expect: CJK30.slice(0, 10) + "粘入" + CJK30.slice(20) },
+		],
+	},
+
+	// ===== U 撤销重做链 =====
+	{
+		name: "U1-bold-undo", group: "U", focus: "加粗→Z→原文（W18 的 U 视角+多次操作）",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: CJK30 },
+		],
+	},
+	{
+		name: "U2-bold-undo-redo", group: "U", focus: "加粗→Z→Y→格式化文本",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "cdpKey", key: "y", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "U3-two-bold-double-undo", group: "U", focus: "两段加粗→Z×2→原文",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 0, to: 5 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "selectRange", from: 25, to: 30 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: CJK30 },
+		],
+	},
+	{
+		name: "U4-type-undo-step", group: "U", focus: "打字→Z→少一段（撤销单元粒度）",
+		channel: "bi-text", text: () => "起始文本",
+		ops: [
+			{ type: "caret", off: null },
+			{ type: "type", text: "追加甲" },
+			{ type: "type", text: "追加乙" },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: "起始文本追加甲" },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: "起始文本" },
+		],
+	},
+	{
+		name: "U5-bold-type-undo-chain", group: "U", focus: "加粗+打字→Z×2 逐步回退",
+		channel: "bi-text", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "caret", off: null },
+			{ type: "type", text: "尾巴" },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "U6-tab-undo", group: "U", focus: "Tab 缩进→Z 恢复",
+		channel: "bi-text", text: () => "- 列表项",
+		ops: [
+			{ type: "caret", off: null },
+			{ type: "enter", shift: true },
+			{ type: "tab" },
+			{ type: "expectSrc", expect: "- 列表项\n  - " },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: "- 列表项\n- " },
+		],
+	},
+	{
+		name: "U7-crossline-bold-undo-verify", group: "U", focus: "跨行加粗（两端补标记=2 条撤销）→Z×2 恢复原文",
+		channel: "bi-text", text: () => THREE_LINES,
+		ops: [
+			{ type: "selectRange", from: 4, to: 14 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(THREE_LINES_PROJ, 4, 14) },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "cdpKey", key: "z", ctrl: true },
+			{ type: "expectSrc", expect: THREE_LINES_PROJ },
+		],
+	},
+
+	// ===== P 刷新多 p / 粘贴通道的格式化 =====
+	{
+		name: "P1-refresh-select-bold", group: "P", focus: "刷新恢复多 p 后选段加粗",
+		channel: "bi-text", refresh: true, text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "P2-refresh-mouseselect-bold", group: "P", focus: "刷新多 p+真实鼠标选段加粗",
+		channel: "bi-text", refresh: true, text: () => CJK30,
+		ops: [
+			{ type: "mouseSelect", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "P3-refresh-crosspara-bold", group: "P", focus: "刷新多 p+跨段落选区加粗（tail 落在段内 offset 25=四/五之间）",
+		channel: "bi-text", refresh: true, text: () => CJK20 + "\n" + CJK20,
+		ops: [
+			{ type: "selectRange", from: 15, to: 25 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: CJK20.slice(0, 15) + "**" + CJK20.slice(15) + "\n" + CJK20.slice(0, 4) + "**" + CJK20.slice(4) },
+		],
+	},
+	{
+		name: "P4-paste-then-bold", group: "P", focus: "粘贴通道注入+选段加粗（期望字符串化——函数 expect 经 JSON 序列化会丢失）",
+		channel: "paste-plain", text: () => CJK30,
+		ops: [
+			{ type: "selectRange", from: 10, to: 20 },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: wrapSel(CJK30, 10, 20) },
+		],
+	},
+	{
+		name: "P5-selectall-multiline-bold", group: "P", focus: "多行全选加粗（跨行两端补标记路径；富文本内 offset 选区/格式化换算与 paste 后编辑时序另案——G1 已覆盖富文本渲染）",
+		channel: "bi-text", text: () => THREE_LINES,
+		ops: [
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "cdpKey", key: "b", ctrl: true },
+			{ type: "expectSrc", expect: "**" + THREE_LINES_PROJ + "**" },
+		],
 	},
 ];

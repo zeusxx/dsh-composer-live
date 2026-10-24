@@ -1365,13 +1365,60 @@ window.__ModuleLoader__.load({
 				setSelectionByOffset(input, act.at, act.at);
 				insertInline(input, act.insert);
 			} else if (act.insert.indexOf("\n") === -1) {
-				// 行内格式（bold/italic/code/link）：替换选区（单行）
+				// 行内格式（bold/italic/code/link）：替换选区（单行）。
+				// 光标恢复必须排在插入完成【之后】（setTimeout 链）——原 rAF 实现在
+				// 「帧先于定时器」的相位下先执行，把选区改写成 [start, start+insert.length)，
+				// 随后 execCommand 就地替换 → 选区后恰好标记字符数的正文被吞（用户报
+				// 「选中加粗后后面的字消失」的根因，2026-10-24；E2E stressWrap 的
+				// 「execCommand 时刻选区」断言第 1 轮即抓，diag-ctrlb-rate 100% 复现）。
+				// 恢复形态=collapsed 落段尾（cursorEnd）：旧版恢复成「选中整段」，用户
+				// 加粗后继续打字会整个替换掉刚加粗的内容（误删风险，W6 场景实测）。
 				setSelectionByOffset(input, start, end);
+				setTimeout(() => {
+					try {
+						document.execCommand("insertText", false, act.insert);
+					} catch (err) { /* 编辑区失焦等场景静默放弃 */ }
+					const cs = act.cursorEnd == null ? act.cursorStart : act.cursorEnd;
+					setTimeout(() => setSelectionByOffset(input, cs, cs), 0);
+				}, 0);
+			} else if (start === end) {
+				// 光标态多行（block 光标态插空代码块框架）：collapsed 处 insertInline
+				//（beforeinput 序列在 collapsed 光标处可靠——问题只出在有选区时）
+				setSelectionByOffset(input, start, start);
 				insertInline(input, act.insert);
-				requestAnimationFrame(() => setSelectionByOffset(input, act.cursorStart, act.cursorEnd == null ? act.cursorStart : act.cursorEnd));
+				const cs2 = act.cursorEnd == null ? act.cursorStart : act.cursorEnd;
+				setTimeout(() => setSelectionByOffset(input, cs2, cs2), 120);
 			} else {
-				// 代码块（多行）：beforeinput 逐行序列
-				insertInline(input, act.insert);
+				// 跨行选区（insert 含 \n）：「两端补标记」——先在 end 处插尾标记（不影响
+				// start 侧偏移），再在 start 处插头标记，最后恢复选区为插入后的整段。
+				// 每步都是 collapsed 光标处的单点插入（execCommand / beforeinput 序列在
+				// collapsed 处均可靠），全程零删除——「删+插」三步链实测在行中跨行选区
+				// 上删除范围漂移、beforeinput 序列部分丢弃（diag-ctrlb 跨行矩阵），直接对
+				// 选区跑序列则与 Lexical 内部 selection 不同步（Tab 块缩进同款坑）。
+				let head, tail;
+				if (kind === "block") {
+					const after = src.slice(end);
+					head = "```\n";
+					tail = "\n```" + (after && !after.startsWith("\n") ? "\n" : "");
+				} else {
+					const pairsX = { bold: ["**", "**"], italic: ["*", "*"], code: ["`", "`"], link: ["[", "](url)"] };
+					const px = pairsX[kind] || ["**", "**"];
+					head = px[0]; tail = px[1];
+				}
+				const cursorEnd2 = act.cursorEnd == null ? act.cursorStart : act.cursorEnd;
+				setTimeout(() => {
+					setSelectionByOffset(input, end, end);
+					setTimeout(() => {
+						insertInline(input, tail);
+						setTimeout(() => {
+							setSelectionByOffset(input, start, start);
+							setTimeout(() => {
+								insertInline(input, head);
+								setTimeout(() => setSelectionByOffset(input, cursorEnd2, cursorEnd2), 120);
+							}, head.indexOf("\n") === -1 ? 30 : 120);
+						}, 0);
+					}, 0);
+				}, 0);
 			}
 		}
 		//#endregion

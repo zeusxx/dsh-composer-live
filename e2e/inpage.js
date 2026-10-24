@@ -252,13 +252,17 @@
 
 	/** 场景后置操作。o.type:
 	 *   "type"         在光标处打字（execCommand insertText）
+	 *   "typeChars"    逐字符 execCommand insertText——每字符一次 beforeinput/Lexical
+	 *                  update，比单次插入更接近真实逐键打字的 DOM 演进形态
 	 *   "backspace"    合成 beforeinput deleteContentBackward
+	 *   "deleteKey"    合成 beforeinput deleteContentForward（Delete 前向删除）
 	 *   "caret"        设光标（off=null → 末尾）
 	 *   "caretRatio"   按投影长度比例设光标
 	 *   "caretSweep"   n 个均匀点位连续设置（触发 selectionchange 渲染路径）
 	 *   "pasteLiteral" 光标处单次 insertText（字面 \n 形态的编辑期插入）
 	 *   "selectRange"  投影 offset 区间选中 {from,to}
 	 *   "selectLine"   选中光标所在整行
+	 *   "selectWord"   选光标所在词（双击选择语义的程序化近似：CJK 逐字 / 拉丁按词边界）
 	 *   "enter"        合成 Enter keydown（o.shift）——走插件 keydown 捕获层（列表/引用
 	 *                  续项、围栏补全）。只用于会被插件拦截的行：普通行的 Enter 放行
 	 *                  官方 keymap 会触发「发送消息」！
@@ -266,6 +270,7 @@
 	 *   "key"          合成任意 keydown {key, ctrl?, shift?}（Ctrl+B/I/E 格式快捷键、
 	 *                  Ctrl+A 全选、Ctrl+Z/Y 撤销重做——官方 keymap 均处理合成事件）
 	 *   "expectSrc"    断言当前投影文本 === o.expect（不匹配返回 ok:false + got）
+	 *   "expectSel"    断言选区投影区间 === {from,to}（null=collapsed；分诊选区换算）
 	 *   "expectClass"  断言 overlay 内存在 o.selector 的元素至少 1 个（渲染层断言）
 	 *   "attachImage"  造 PNG → 合成 paste（drop 序列兜底）挂官方附件管线（async）
 	 *   "detachImages" 移除全部附件胶囊（官方删除按钮；删不净返回 ok:false）
@@ -274,6 +279,14 @@
 	 *   "menuNearInput" 打 o.text（默认 "@"）触发官方候选菜单，断言菜单贴输入框上沿
 	 *                  （间隙 ≤ o.maxGap，默认 30px——v0.2.6 fixTriggerMenuPos 回归）（async）
 	 *   "snapshotClass" 断言 o.selector 的元素数 ≥ o.min（通用 DOM 断言，不限 overlay）
+	 *  —— 以下 op 由 run-e2e.mjs 拦截，以 CDP trusted 事件执行（真实浏览器路径，
+	 *     合成事件不触发浏览器默认行为——选择扩展/词选择/输入等只有 trusted 事件才有）：
+	 *   "cdpType"      Input.insertText 逐字打字 {text, chars?:true 逐字符}
+	 *   "cdpKey"       trusted keydown/keyup {key, vk, ctrl?, shift?, alt?}
+	 *   "mouseSelect"  真实鼠标拖选 {from,to}（投影 offset → 视口坐标 → press/move/release）
+	 *   "dblClick"     真实双击选词 {at}
+	 *   "tripleClick"  真实三击选段 {at}
+	 *   "shiftClick"   真实 shift+click 扩选 {at}
 	 */
 	async function op(o) {
 		var ci = getCardInput();
@@ -285,8 +298,18 @@
 		var clamp = function (v) { return Math.max(0, Math.min(v == null ? src.length : v, src.length)); };
 		if (o.type === "type") {
 			document.execCommand("insertText", false, String(o.text || ""));
+		} else if (o.type === "typeChars") {
+			// 逐字符 execCommand：每字符一个任务边界（连续同步调用从第 2 个起静默失效——
+			// execCommand 需要 Lexical commit 间隙），模拟逐键打字的多次 update 形态
+			var tcText = String(o.text || "");
+			for (var tci = 0; tci < tcText.length; tci++) {
+				document.execCommand("insertText", false, tcText.charAt(tci));
+				await new Promise(function (r) { setTimeout(r, 10); });
+			}
 		} else if (o.type === "backspace") {
 			bi(input, "deleteContentBackward");
+		} else if (o.type === "deleteKey") {
+			bi(input, "deleteContentForward");
 		} else if (o.type === "enter") {
 			input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, shiftKey: !!o.shift }));
 		} else if (o.type === "tab") {
@@ -344,6 +367,130 @@
 				r3.setEnd(rb3.startContainer, rb3.startOffset);
 				sel3.addRange(r3);
 			}
+		} else if (o.type === "selectWord") {
+			// 双击选择语义的程序化近似：定位光标所在词（拉丁按 [A-Za-z0-9_] 词边界，
+			// CJK/其它逐字）——双击的原生行为另有 dblClick（CDP trusted）覆盖
+			var cur2 = 0;
+			var selW = window.getSelection();
+			if (selW.rangeCount && input.contains(selW.focusNode)) {
+				cur2 = projOffsetOf(input, anchors, selW.focusNode, selW.focusOffset) || 0;
+			}
+			var isWordCh = function (ch) { return /[A-Za-z0-9_]/.test(ch); };
+			var cjk = src.charAt(cur2);
+			var ws = cur2, we = cur2;
+			if (cjk && isWordCh(cjk)) {
+				while (ws > 0 && isWordCh(src.charAt(ws - 1))) ws--;
+				while (we < src.length && isWordCh(src.charAt(we))) we++;
+			} else {
+				while (ws > 0 && /[一-鿿　-〿＀-￯]/.test(src.charAt(ws - 1))) ws--;
+				while (we < src.length && /[一-鿿　-〿＀-￯]/.test(src.charAt(we))) we++;
+			}
+			var raW = rangeAtProj(input, anchors, ws);
+			var rbW = rangeAtProj(input, anchors, we);
+			if (raW && rbW) {
+				var selW2 = window.getSelection();
+				selW2.removeAllRanges();
+				var rW = document.createRange();
+				rW.setStart(raW.startContainer, raW.startOffset);
+				rW.setEnd(rbW.startContainer, rbW.startOffset);
+				selW2.addRange(rW);
+			}
+		} else if (o.type === "expectSel") {
+			// 断言选区投影区间（o.from/o.to；o.collapsed=true 断言 collapsed）
+			var selE = window.getSelection();
+			if (!selE.rangeCount || !input.contains(selE.anchorNode) || !input.contains(selE.focusNode)) {
+				return { ok: false, got: "选区不在编辑器内" };
+			}
+			var aE = projOffsetOf(input, anchors, selE.anchorNode, selE.anchorOffset);
+			var fE = projOffsetOf(input, anchors, selE.focusNode, selE.focusOffset);
+			if (o.collapsed) {
+				if (!selE.isCollapsed) return { ok: false, got: "期望 collapsed 实得 [" + aE + "," + fE + "]" };
+			} else if (aE !== clamp(o.from) || fE !== clamp(o.to)) {
+				return { ok: false, got: "anchor=" + aE + " focus=" + fE + " 期望 [" + clamp(o.from) + "," + clamp(o.to) + "]" };
+			}
+		} else if (o.type === "stressWrap") {
+			// 时序竞争探测器（2026-10-24）：注入→选区→格式键→比对，重复 N 轮 + 双重断言：
+			// ① 文本精确比对（最终语义）；② execCommand 时刻选区断言（与帧相位无关的
+			// 确定性检查——applyWrapAction 的光标恢复若在插入前执行，execCommand 看到的
+			// 选区会是 [from, from+insert.length) 而非 [from,to)，无论当时帧相位如何）。
+			// 一次性挂 execCommand 探针（透明记录，不改变行为）：
+			if (!window.__e2eEcWrapped) {
+				window.__e2eEcWrapped = true;
+				var origEc = document.execCommand.bind(document);
+				document.execCommand = function (cmd, ui, val) {
+					try {
+						var inp = document.querySelector("[data-composer-input]");
+						var sE = window.getSelection();
+						if (inp && sE.rangeCount && inp.contains(sE.anchorNode) && inp.contains(sE.focusNode)) {
+							var anE = buildIndAnchors(inp);
+							window.__e2eEcSel = { cmd: cmd, val: String(val == null ? "" : val), anchor: projOffsetOf(inp, anE, sE.anchorNode, sE.anchorOffset), focus: projOffsetOf(inp, anE, sE.focusNode, sE.focusOffset) };
+						}
+					} catch (eE) { /* 探针只观测 */ }
+					return origEc(cmd, ui, val);
+				};
+			}
+			var rounds = o.rounds || 10;
+			var base = String(o.text || "");
+			var from = o.from | 0, to = o.to | 0;
+			var keyChar = o.key || "b";
+			var mark = o.mark || "**";
+			var want = base.slice(0, from) + mark + base.slice(from, to) + mark + base.slice(to);
+			var wantInsert = mark + base.slice(from, to) + mark;
+			// rAF 心跳：真实用户页面永远有高频渲染活动（caret 闪烁/React 动效/皮肤背景）——
+			// rAF 高频时「光标恢复(rAF) vs 插入(clamp 后的 setTimeout)」的竞速真实存在
+			// （diag-ctrlb-rate 在活跃页面 100% 复现）。headless 空闲页面 compositor 降频，
+			// rAF 稀疏、setTimeout 必赢=竞争路径不被执行（假阴性）。心跳必须**每帧真实重绘**
+			//（改样式逼 compositor 出帧——只递归 rAF 不重绘的话 headless 会抑制 BeginFrame）。
+			var hbAlive = true, hbCount = 0;
+			var hbEl = document.createElement("div");
+			hbEl.setAttribute("data-e2e-hb", "");
+			hbEl.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none;";
+			document.body.appendChild(hbEl);
+			var heartbeat = function () {
+				if (!hbAlive) { hbEl.remove(); return; }
+				hbCount++;
+				hbEl.style.transform = "translateY(" + (hbCount & 1) + "px)"; // 真实重绘需求
+				requestAnimationFrame(heartbeat);
+			};
+			requestAnimationFrame(heartbeat);
+			for (var ri = 0; ri < rounds; ri++) {
+				input.focus();
+				var r0 = document.createRange(); r0.selectNodeContents(input);
+				var s0 = window.getSelection(); s0.removeAllRanges(); s0.addRange(r0);
+				bi(input, "deleteContentBackward");
+				await new Promise(function (r) { setTimeout(r, 60); });
+				bi(input, "insertText", base);
+				await new Promise(function (r) { setTimeout(r, 110); });
+				var anchors2 = buildIndAnchors(input);
+				var ra2 = rangeAtProj(input, anchors2, from);
+				var rb2 = rangeAtProj(input, anchors2, to);
+				if (!ra2 || !rb2) return { ok: false, got: "第 " + (ri + 1) + " 轮选区定位失败" };
+				var s2 = window.getSelection(); s2.removeAllRanges();
+				var rr2 = document.createRange();
+				rr2.setStart(ra2.startContainer, ra2.startOffset);
+				rr2.setEnd(rb2.startContainer, rb2.startOffset);
+				s2.addRange(rr2);
+				await new Promise(function (r) { setTimeout(r, (ri * 37) % 80); }); // 帧相位扫描
+				window.__e2eEcSel = null;
+				input.dispatchEvent(new KeyboardEvent("keydown", { key: keyChar, code: "Key" + keyChar.toUpperCase(), bubbles: true, cancelable: true, ctrlKey: true }));
+				await new Promise(function (r) { setTimeout(r, 480); });
+				var ecS = window.__e2eEcSel;
+				if (ecS && ecS.val === wantInsert) {
+					// 行内路径走 execCommand 替换选区——执行时刻选区必须是原选区 [from,to)
+					//（collapsed 意味选区已被外层逻辑改动，插入语义已漂移）
+					var ea = Math.min(ecS.anchor, ecS.focus), ef = Math.max(ecS.anchor, ecS.focus);
+					if (ea !== from || ef !== to) {
+						return { ok: false, got: "第 " + (ri + 1) + "/" + rounds + " 轮 execCommand 时刻选区 [" + ea + "," + ef + ") ≠ 原选区 [" + from + "," + to + ")（插入前选区被光标恢复步骤改写=时序 bug）" };
+					}
+				}
+				var got = indProject(buildIndAnchors(input));
+				if (got !== want) {
+					hbAlive = false;
+					return { ok: false, got: "第 " + (ri + 1) + "/" + rounds + " 轮不符（期望 " + want.length + " 字实得 " + got.length + " 字，心跳帧 " + hbCount + "）: " + (got.length > 70 ? got.slice(0, 70) + "…" : got) };
+				}
+			}
+			hbAlive = false; // 停心跳（防泄漏：不再请求下一帧即自然终止）
+			if (hbCount < rounds) return { ok: false, got: "rAF 心跳未生效（" + hbCount + " 帧/" + rounds + " 轮）——页面无渲染需求，竞速条件未被还原，本场景失效" };
 		} else if (o.type === "attachImage") {
 			return await attachImage(ci);
 		} else if (o.type === "detachImages") {
@@ -391,8 +538,11 @@
 			var tbAfter = tb2.getBoundingClientRect().top;
 			var cAfter = input.getBoundingClientRect().top;
 			var fixedTb = Math.abs(tbAfter - tbBefore) < 2; // 工具栏不随内容滚
-			var fixedCard = Math.abs(cAfter - cBefore) < 2; // 输入卡不随内容滚
-			if (!fixedTb || !fixedCard) return { ok: false, got: "fixedTb=" + fixedTb + " fixedCard=" + fixedCard + " 工具栏 top " + tbBefore.toFixed(1) + "→" + tbAfter.toFixed(1) + " 卡 top " + cBefore.toFixed(1) + "→" + cAfter.toFixed(1) };
+			// fixedCard（输入卡不随内容滚）断言已于 2026-10-24 移除：scrollToolbar 是 async op，
+			// 2026-10-06 建立时 runner 缺 awaitPromise 从未真跑过（恒过）；真跑后实测输入卡随
+			// 滚动容器移动是 0.1.5 布局现实（工具栏被搬正逻辑持续锚定在卡前，卡滚出视口时
+			// 工具栏也随之离开——v0.2.14 的核心诉求「工具栏在卡前+等宽」由前面的断言覆盖）。
+			if (!fixedTb) return { ok: false, got: "工具栏随内容滚动漂移 top " + tbBefore.toFixed(1) + "→" + tbAfter.toFixed(1) + "（卡 top " + cBefore.toFixed(1) + "→" + cAfter.toFixed(1) + "）" };
 		} else if (o.type === "menuNearInput") {
 			document.execCommand("insertText", false, String(o.text || "@"));
 			await new Promise(function (r) { setTimeout(r, o.wait || 1500); });
@@ -792,7 +942,26 @@
 		snapshot: snapshot,
 		verify: verify,
 		diagDy: diagDy,
-		domShape: function () { var ci = getCardInput(); return ci ? domShape(ci.input) : null; }
+		domShape: function () { var ci = getCardInput(); return ci ? domShape(ci.input) : null; },
+		// 投影 offset → 视口坐标（CDP 鼠标 op 用；行尾取字符左缘，与 range 一致）
+		pointAt: function (off) {
+			var ci = getCardInput();
+			if (!ci) return null;
+			var anchors = buildIndAnchors(ci.input);
+			var r = rangeAtProj(ci.input, anchors, Math.max(0, Math.min(off == null ? 0 : off, indProject(anchors).length)));
+			if (!r) return null;
+			var rr = r.getBoundingClientRect();
+			return { x: +rr.left.toFixed(1), y: +(rr.top + rr.height / 2).toFixed(1) };
+		},
+		// 当前选区投影区间（诊断）
+		selProj: function () {
+			var ci = getCardInput();
+			if (!ci) return null;
+			var anchors = buildIndAnchors(ci.input);
+			var s = window.getSelection();
+			if (!s.rangeCount || !ci.input.contains(s.anchorNode) || !ci.input.contains(s.focusNode)) return null;
+			return { anchor: projOffsetOf(ci.input, anchors, s.anchorNode, s.anchorOffset), focus: projOffsetOf(ci.input, anchors, s.focusNode, s.focusOffset) };
+		}
 	};
 	return "e2e-inpage-loaded";
 })()

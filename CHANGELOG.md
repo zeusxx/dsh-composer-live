@@ -2,7 +2,18 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
-## 0.2.15（2026-10-18）
+## 0.2.16（2026-10-24）
+
+**选中一段文字加粗/斜体/行内码后，选区后面的字消失（用户实测反馈「翻转头去选择一部分文字用 Ctrl+B，在它后面的有一些字就消失了」）。**
+
+- **根因（行内路径）**：`applyWrapAction` 的光标恢复用 `requestAnimationFrame`、选区替换用 `setTimeout(0)` 的 execCommand——页面有高频渲染活动（caret 闪烁/React 动效）时 rAF 会在被 clamp 的定时器**之前**执行，把 DOM 选区改写成 `[start, start+insert.length)`，随后的 execCommand 就地替换该选区 → **恰好吞掉 insert 标记字符数（bold 为 4 个）的正文**。是否触发取决于 keydown 时刻的帧相位：用户自然操作节奏经常踩中（diag-ctrlb-rate 在活跃页面 100% 复现），单行全选/尾部选区恰好不敏感（旧 E2E 的 Q6 因此漏检）。
+- **根因（跨行路径）**：选区含换行（`act.insert` 含 `\n`）时直接对选区跑 `insertInline` 的 beforeinput 逐行序列——与 Lexical 内部 selection 状态不同步（Tab 块缩进当年同款坑），产生内容丢失/重复（diag-ctrlb 的 C1/B4 实锤）。
+- **修法**：行内分支光标恢复改为排在 execCommand **完成之后**的 setTimeout 链（时序上不可能再先于插入）；跨行/代码块分支改走「先删后插」三步链（重建选区 → 合成 deleteContentBackward → commit 后光标落 start → 插入完整内容 → 恢复选区）。
+- **E2E 体系大扩充（62 → 129 场景）**：S 组（12 种用户选择方式——真实鼠标拖选/双击选词/三击选段/Shift+Click/Shift+方向键/行选择，CDP trusted 事件）+ W 组（20 种格式化形态——行首/行中/行尾/跨行 br/字面 \n/行尾边界/光标态/嵌套/链式/含标记/含 emoji/列表引用行内/撤销）+ X 组（10 个 CDP trusted 逐字打字通道场景——**合成 beforeinput 逐字符在 Lexical 下失效（只进 1 字），此前矩阵根本没有真实打字通道**）+ D 组（9 种删除变体——选中删/替换删/Ctrl+Backspace 删词/跨行合并）+ U 组（7 条撤销重做链）+ P 组（5 个刷新多 p/粘贴通道格式化）。
+- **测试基建修三层假阴性**（都由本次「测不出用户 bug」倒逼出来的）：① runner 的 `cdp.eval` 缺 `awaitPromise:true`——所有 async op 的断言失败值被丢弃（拿到空对象=恒 PASS）；② headless 空闲页面 compositor 降频、rAF 稀疏——时序竞争路径根本不执行，stressWrap 内置「每帧真实重绘」的 rAF 心跳还原真实用户页面节奏；③ 单次断言对帧相位敏感——stressWrap 用「execCommand 时刻选区」确定性断言（插入前选区被改写即报错，与帧相位无关）+ 12 轮 0-80ms 相位扫描 + 文本精确比对双保险。
+- **新增 CDP trusted op**（run-e2e.mjs 拦截执行，合成事件不触发浏览器默认行为的结构性盲区）：`cdpType`（Input.insertText 逐字打字）/ `cdpKey`（trusted keydown）/ `mouseSelect`（真实鼠标拖选）/ `dblClick` / `tripleClick` / `shiftClick`；页内新增 op：`typeChars`（execCommand 逐字符）/ `deleteKey`（前向删除）/ `selectWord` / `expectSel`（选区投影区间断言）/ `stressWrap`（时序压力探测器）。
+- 单测 188 → 206 项（`_decideWrapAction` 此前零覆盖，补 18 条形态测试）。
+
 
 **输入 `/` 命令/技能名时文字无颜色、hover 被色块遮挡（用户 0.2.1 实测反馈）。**
 

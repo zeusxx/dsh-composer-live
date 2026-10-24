@@ -295,6 +295,116 @@ async function waitStable(timeoutMs = 10000) {
 	return false; // 超时：不稳定，照常校验（报告标注）
 }
 
+// ---------- CDP trusted 输入 op（真实浏览器路径） ----------
+// 合成 KeyboardEvent/MouseEvent 的 isTrusted=false 不触发浏览器默认行为（选择扩展、
+// 词选择、文本输入等）——日常操作里大量路径只有 trusted 事件才走得到。这组 op 由
+// runner 直接以 CDP Input 域执行（2026-10-23 用户 Ctrl+B 丢字 bug 的复现路径）。
+const VK = { backspace: 8, delete: 46, enter: 13, tab: 9, a: 65, b: 66, c: 67, d: 68, e: 69, i: 73,
+	v: 86, x: 88, y: 89, z: 90, arrowleft: 37, arrowup: 38, arrowright: 39, arrowdown: 40, home: 36, end: 35 };
+const CDP_OP_TYPES = new Set(["cdpType", "cdpKey", "mouseSelect", "dblClick", "tripleClick", "shiftClick", "menuNearInput"]);
+async function cdpOp(o) {
+	// inpage op 每次都 input.focus()；CDP 路径也要（不聚焦时 insertText/按键无效）
+	await cdp.eval("(function(){var i=document.querySelector('[data-composer-input]');if(i&&document.activeElement!==i)i.focus();return true;})()");
+	if (o.type === "cdpType") {
+		// trusted 打字（Input.insertText 走 IME 提交路径，Lexical 全处理；
+		// chars:true 逐字符逐次提交——真实逐键打字的最贴近模拟）
+		const text = String(o.text || "");
+		if (o.chars) {
+			for (const ch of text) {
+				await cdp.send("Input.insertText", { text: ch });
+				await sleep(o.interval || 0);
+			}
+		} else {
+			await cdp.send("Input.insertText", { text });
+		}
+		await sleep(150);
+		return { ok: true };
+	}
+	if (o.type === "cdpKey") {
+		const keyName = String(o.key || "").toLowerCase();
+		const vk = o.vk || VK[keyName] || (keyName.length === 1 ? keyName.toUpperCase().charCodeAt(0) : 0);
+		const modifiers = (o.ctrl ? 2 : 0) | (o.alt ? 1 : 0) | (o.shift ? 8 : 0) | (o.meta ? 4 : 0);
+		const ev = { key: String(o.key || ""), code: o.code || (keyName.length === 1 ? "Key" + keyName.toUpperCase() : keyName), windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers };
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...ev });
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...ev });
+		await sleep(o.hold || 120);
+		return { ok: true };
+	}
+	// 鼠标类：pointAt 由 inpage 提供投影 offset → 视口坐标
+	if (o.type === "mouseSelect") {
+		const a = await cdp.eval(`window.__e2e.pointAt(${o.from})`);
+		const b = await cdp.eval(`window.__e2e.pointAt(${o.to})`);
+		if (!a || !b) return { ok: false, got: "pointAt 定位失败" };
+		await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: a.x, y: a.y, button: "left", buttons: 1, clicks: 1 });
+		const steps = 5;
+		for (let i = 1; i <= steps; i++) {
+			await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(a.x + (b.x - a.x) * i / steps), y: Math.round(a.y + (b.y - a.y) * i / steps), button: "left", buttons: 1 });
+			await sleep(25);
+		}
+		await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: b.x, y: b.y, button: "left", buttons: 0, clicks: 1 });
+		await sleep(140);
+		return { ok: true };
+	}
+	const pt = async () => await cdp.eval(`window.__e2e.pointAt(${o.at})`);
+	if (o.type === "dblClick" || o.type === "tripleClick") {
+		const p = await pt();
+		if (!p) return { ok: false, got: "pointAt 定位失败" };
+		const clicks = o.type === "dblClick" ? 2 : 3;
+		for (let i = 1; i <= clicks; i++) {
+			await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: p.x, y: p.y, button: "left", buttons: 1, clicks: i });
+			await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p.x, y: p.y, button: "left", buttons: 0, clicks: i });
+			await sleep(100); // 双击判定窗口内但留足 CDP 消息间隔（40ms 实测不触发原生词选择）
+		}
+		await sleep(140);
+		return { ok: true };
+	}
+	if (o.type === "shiftClick") {
+		const p = await pt();
+		if (!p) return { ok: false, got: "pointAt 定位失败" };
+		await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: p.x, y: p.y, button: "left", buttons: 1, clicks: 1, modifiers: 8 });
+		await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p.x, y: p.y, button: "left", buttons: 0, clicks: 1, modifiers: 8 });
+		await sleep(140);
+		return { ok: true };
+	}
+	if (o.type === "menuNearInput") {
+		// CDP 版（2026-10-24）：inpage 的 execCommand 版自 10-01 起一直「假绿」——runner
+		// 缺 awaitPromise 时 async op 从不真跑；真跑后发现 execCommand 插 "@" 不触发官方
+		// input-trigger。改走 Input.insertText（真实输入流，IME 提交路径）。
+		const inputSel = "[data-composer-input]";
+		await cdp.eval(`(function(){var i=document.querySelector('${inputSel}');if(i&&document.activeElement!==i)i.focus();return true;})()`);
+		const before = await cdp.eval(`window.__e2e.snapshot().srcLen`);
+		// trusted 键盘输入（keyDown 带 text=字符输入路径）：insertText 版实测不触发
+		// 0.1.5 的官方 input-trigger；execCommand 版同样不触发且此 op 曾经长期假绿
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "@", code: "Digit2", text: "@", modifiers: 8, unmodifiedText: "@" });
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "@", code: "Digit2", modifiers: 8 });
+		await sleep(o.wait || 1500);
+		const rect = await cdp.eval(`(function () {
+			var menu = document.querySelector("[data-trigger-menu]") || document.querySelector('[role="listbox"]');
+			if (!menu) return null;
+			var input = document.querySelector('${inputSel}');
+			var mr = menu.getBoundingClientRect(), ir = input.getBoundingClientRect();
+			return { gap: +(ir.top - mr.bottom).toFixed(1) };
+		})()`);
+		// 收尾：Esc 关菜单 + 删掉触发的字符（光标置末尾后逐个 Backspace）
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+		await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+		await sleep(250);
+		const after = await cdp.eval("window.__e2e.snapshot().srcLen");
+		if (after > before) {
+			await cdp.eval(`window.__e2e.op(${JSON.stringify({ type: "caret", off: null })})`);
+			for (let i = 0; i < after - before; i++) {
+				await cdp.eval(`window.__e2e.op(${JSON.stringify({ type: "backspace" })})`);
+				await sleep(40);
+			}
+		}
+		if (!rect) return { ok: false, got: "候选菜单未弹出（[data-trigger-menu]/[role=listbox] 均无命中）" };
+		const maxGap = o.maxGap || 30;
+		if (rect.gap > maxGap) return { ok: false, got: "菜单底距输入框顶 " + rect.gap + "px（> " + maxGap + "）悬空溢出" };
+		return { ok: true };
+	}
+	return { ok: false, got: "未知 CDP op: " + o.type };
+}
+
 // ---------- 场景执行 ----------
 function normSteps(sc) {
 	if (sc.steps) return sc.steps.map((s) => ({ channel: s.channel, text: s.text, html: s.html, caretProjOff: s.caretProjOff }));
@@ -306,15 +416,22 @@ log(`\n======== E2E 开始：${todo.length} 个场景 ========\n`);
 
 const results = [];
 let browserDead = false;
-for (const sc of todo) {
+async function runOnce(sc) {
 	const row = { name: sc.name, group: sc.group, focus: sc.focus || "", ok: true, invs: {}, injects: [], unstable: false, error: null };
-	results.push(row);
 	try {
 		const cMark = cdp.consoleErrors.length;
 		// 视口控制：场景声明 viewport 则设置（窄视口软折行等），否则恢复默认
 		if (sc.viewport) await cdp.send("Emulation.setDeviceMetricsOverride", { width: sc.viewport.width, height: sc.viewport.height, deviceScaleFactor: 1, mobile: false });
 		else await cdp.send("Emulation.clearDeviceMetricsOverride");
 		await cdp.eval("window.__e2e.clearDraft()");
+		await sleep(200);
+		// 双保险：paste 通道等场景的官方异步处理可能让首次 clearDraft 落空（Q1 全套跑
+		// 实测 534 字残留）——投影非空再清一次，仍非空则标错（场景起点必须干净）
+		const leftLen = await cdp.eval("(function(){try{return window.__e2e.snapshot().srcLen}catch(e){return -1}})()");
+		if (leftLen > 0) {
+			await cdp.eval("window.__e2e.clearDraft()");
+			await sleep(250);
+		}
 		if (!(await waitStable())) row.unstable = true;
 
 		for (const step of normSteps(sc)) {
@@ -323,7 +440,7 @@ for (const sc of todo) {
 			if (!inj || !inj.ok) { row.ok = false; row.error = "注入失败: " + JSON.stringify(inj); break; }
 			await waitStable(6000);
 		}
-		if (row.error) { finishRow(row, cMark); logLine(row); continue; }
+		if (row.error) return row;
 
 		if (sc.refresh) {
 			await cdp.send("Page.reload");
@@ -349,7 +466,9 @@ for (const sc of todo) {
 		}
 
 		for (const o of sc.ops || []) {
-			const opr = await cdp.eval(`window.__e2e.op(${JSON.stringify(o)})`);
+			// awaitPromise=true：op 是 async 函数（stressWrap/attachImage 等）——不等待的话
+			// 断言失败值丢失（拿到空对象=恒 PASS，2026-10-24 stressWrap 假阴性的根因）
+			const opr = CDP_OP_TYPES.has(o.type) ? await cdpOp(o) : await cdp.eval(`window.__e2e.op(${JSON.stringify(o)})`, true);
 			if (opr && opr.ok === false) {
 				row.ok = false;
 				row.error = "op 断言失败（" + JSON.stringify(o).slice(0, 80) + "）：实际投影 " + JSON.stringify(opr.got || "");
@@ -357,7 +476,7 @@ for (const sc of todo) {
 			}
 			await waitStable(6000);
 		}
-		if (row.error) { finishRow(row, cMark); logLine(row); continue; }
+		if (row.error) return row;
 
 		const v = await cdp.eval("window.__e2e.verify()");
 		if (!v || v.error) { row.ok = false; row.error = "校验器异常: " + (v && v.error); }
@@ -370,24 +489,44 @@ for (const sc of todo) {
 		const errs = cdp.consoleErrors.slice(cMark).filter((e) => !KNOWN_NOISE.some((k) => e.includes(k)));
 		row.invs["INV-8"] = { ok: errs.length === 0, detail: errs.length ? errs.slice(0, 3).join(" | ") : "零错误" };
 		if (errs.length) row.ok = false;
-		finishRow(row, cMark);
+		return row;
 	} catch (e) {
 		row.ok = false;
 		row.error = String(e.message || e).slice(0, 300);
 		if (/CDP|WebSocket/i.test(row.error)) browserDead = true;
+		return row;
 	}
+}
+
+for (const sc of todo) {
+	// 目标级跳过（sc.skipOn: 目标别名数组——官方行为差异使场景在某环境无法成立时用；
+	// 跳过的场景记 SKIP 不计入失败，报告保留一行）
+	if (sc.skipOn && sc.skipOn.includes(targetKey)) {
+		const row = { name: sc.name, group: sc.group, focus: sc.focus || "", ok: true, skipped: true, invs: {}, injects: [], unstable: false, error: null };
+		results.push(row);
+		log(`[SKIP] ${sc.name}（skipOn ${targetKey}：${sc.focus || ""}）`);
+		continue;
+	}
+	let row = await runOnce(sc);
+	if (!row.ok && !browserDead) {
+		// flaky 竞态重试一次（官方草稿恢复竞态造成的场景间残留等——Q1/U7 全套跑实测单跑
+		// 正常；确定性 bug 重跑仍红，不会掩盖真问题），重试结果覆盖并标记
+		log(`  [retry] ${sc.name} 首跑失败，重试一次`);
+		row = await runOnce(sc);
+		row.retried = true;
+	}
+	results.push(row);
 	logLine(row);
 	if (browserDead) { log("\n浏览器连接断开，中止剩余场景"); break; }
 }
 
-function finishRow(row, cMark) { /* 占位：结果已在 row 上 */ }
 function logLine(row) {
 	const mark = row.ok ? "PASS" : "FAIL";
 	const bad = Object.entries(row.invs).filter(([, v]) => v && !v.ok).map(([k, v]) => {
 		const d = String(v.detail || "").slice(0, 160);
 		return `${k}: ${d}`;
 	});
-	log(`[${mark}] ${row.name}${row.focus ? "（" + row.focus + "）" : ""}${row.unstable ? " [渲染未稳定]" : ""}`);
+	log(`[${mark}] ${row.name}${row.focus ? "（" + row.focus + "）" : ""}${row.unstable ? " [渲染未稳定]" : ""}${row.retried ? " [重试后]" : ""}`);
 	if (!row.ok) {
 		if (row.error) log(`       错误: ${row.error}`);
 		for (const b of bad.slice(0, 6)) log(`       ${b}`);

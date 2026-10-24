@@ -296,5 +296,27 @@ t('marks block', am('```\ncode', 7), ['block']);
 t('marks none', am('普通文字', 2), []);
 t('marks boundary', am('**粗**', 0), ['bold']);
 
+// ===== 格式快捷键动作（decideWrapAction——2026-10-24 补，此前零覆盖）=====
+// 语义：选中=前后加标记、选区恢复为 [start, start+insert.length)；光标态=插空标记、
+// 光标落前标记后。跨行选区 insert 原样含 \n（渲染语义另论，字符必须保全）。
+t('wrap bold mid', wrap('abcdef', 2, 4, 'bold'), { insert: '**cd**', cursorStart: 2, cursorEnd: 8 });
+t('wrap bold head', wrap('abcdef', 0, 2, 'bold'), { insert: '**ab**', cursorStart: 0, cursorEnd: 6 });
+t('wrap bold tail', wrap('abcdef', 4, 6, 'bold'), { insert: '**ef**', cursorStart: 4, cursorEnd: 10 });
+t('wrap italic mid', wrap('abcdef', 2, 4, 'italic'), { insert: '*cd*', cursorStart: 2, cursorEnd: 6 });
+t('wrap code mid', wrap('abcdef', 2, 4, 'code'), { insert: '`cd`', cursorStart: 2, cursorEnd: 6 });
+t('wrap link mid', wrap('abcdef', 2, 4, 'link'), { insert: '[cd](url)', cursorStart: 2, cursorEnd: 11 });
+t('wrap caret bold', wrap('abcdef', 2, 2, 'bold'), { insert: '****', cursorStart: 4, cursorEnd: 4 });
+t('wrap caret italic', wrap('abcdef', 2, 2, 'italic'), { insert: '**', cursorStart: 3, cursorEnd: 3 });
+t('wrap caret empty doc', wrap('', 0, 0, 'bold'), { insert: '****', cursorStart: 2, cursorEnd: 2 });
+t('wrap sel keeps newline', wrap('ab\ncd', 1, 4, 'bold'), { insert: '**b\nc**', cursorStart: 1, cursorEnd: 8 });
+t('wrap sel with marks', wrap('甲乙**丙**丁', 2, 7, 'bold'), { insert: '****丙****', cursorStart: 2, cursorEnd: 11 });
+t('wrap sel emoji', wrap('甲🎉乙', 1, 3, 'bold'), { insert: '**🎉**', cursorStart: 1, cursorEnd: 7 });
+t('wrap selStart null → 0', wrap('abcdef', null, 2, 'bold'), { insert: '**ab**', cursorStart: 0, cursorEnd: 6 });
+t('wrap unknown kind → null', wrap('abcdef', 0, 2, 'strike'), null);
+t('wrap list at line head', wrap('abc\ndef', 4, 4, 'list'), { insert: '- ', cursorStart: 6, cursorEnd: 6, at: 4 });
+t('wrap list already marked → null', wrap('abc\n- def', 5, 5, 'list'), null);
+t('wrap block mid lines', wrap('前文\nx=1\n后文', 3, 6, 'block'), { insert: '```\nx=1\n```', cursorStart: 7, cursorEnd: 10 });
+t('wrap block tail no extra nl', wrap('abcx=1', 0, 6, 'block'), { insert: '```\nabcx=1\n```', cursorStart: 4, cursorEnd: 10 });
+
 console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
