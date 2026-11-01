@@ -2,6 +2,15 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.18（2026-11-01）
+
+**文档与发布物料更新（功能零变更）——README 双语大修 + 首个动态演示 GIF。**
+
+- **新增动态演示 GIF**（`docs/screenshots/demo.gif`，960×540、109 帧、1.8MB）：真实逐字打字过程——行内四件套（粗体/行内代码胶囊/斜体/删除线）、列表与任务项、```` ```js ```` 围栏自动补全成代码块并语法高亮，一镜到底。录制脚本 `e2e/capture-demo-gif.mjs`（CDP screencast + trusted 逐字打字通道，随仓库工具链留档，发布白名单不含）。
+- README（中英双语）五处增强：顶部嵌入演示 GIF；徽章更新为「206 单测 · 129 E2E」；新增「实测版本」表（0.1.5-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.5 三代全绿，双环境 E2E 是本插件独有的质量承诺）；新增「与其它输入框插件的关系」对比表（composer-plus / composer-enter / prompt-history 互不重叠可共存）；新增「反馈」段（issue 入口）。
+- 修正过时数字：单测 188→206、E2E 62→129 场景。
+- npm keywords 增补（live-preview / toolbar / format / paste）。
+
 ## 0.2.17（2026-10-24）
 
 **渲染性能大优化：空闲主线程占用 98% → 0、打字帧率 6fps → 125fps（200 行文档实测）。**

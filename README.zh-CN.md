@@ -6,7 +6,9 @@
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5)
-![Tests](https://img.shields.io/badge/unit%20tests-188%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f)
+
+![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](docs/screenshots/demo.gif)
 
 dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编辑器：你打 Markdown，它边打边渲染——加粗、斜体、带语法高亮的代码块、列表、引用、表格——而草稿本身始终是纯 Markdown 源文本，发送出去的就是你输入的原文。
 
@@ -94,6 +96,16 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 | ↓ | 已闭合块最后一个内容行 | 跳到块后 |
 | Esc | 菜单开着→官方 · 展开态→收起 · 生成中→停止 | 按语境分发 |
 
+## 实测版本
+
+每个版本发布前都在两个真实实例上跑完整 129 场景 E2E（覆盖两代支持的架构）：
+
+| DSH 版本 | 状态 |
+| --- | --- |
+| 0.1.5-rc.2 | ✅ E2E 实测通过 |
+| 0.2.0-rc.2 | ✅ E2E 实测通过 |
+| 0.2.1-rc.5 | ✅ E2E 实测通过（主力环境） |
+
 ## 环境要求
 
 - **DSH ≥ 0.1.5-rc.2**，`web` profile——本插件面向 0.1.5 的 Lexical contenteditable 输入框。
@@ -152,8 +164,8 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 ## 开发
 
 ```bash
-node test-live.cjs    # 188 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs  # 62 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node test-live.cjs    # 206 项单测（纯函数，无需浏览器）
+node e2e/run-e2e.mjs  # 129 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
 ```
 
 E2E runner 要求被测实例已部署当前源码，路径全部由环境变量推导：`DSH_CL_PORT`（默认 8124）与 `DSH_CL_DSH_HOME`（默认取 `DSH_HOME`，再默认 `~/.dsh`）定位部署副本做版本对照，鉴权 cookie 自动获取。完整变量表见 [e2e/README.md](./e2e/README.md)。
@@ -161,6 +173,17 @@ E2E runner 要求被测实例已部署当前源码，路径全部由环境变量
 套件复刻六种真实输入通道（字面 `\n` / 字面 `\r\n` / 逐行 br / insertParagraph / 合成 paste / 刷新恢复多段落），用一份独立投影与插件自身的投影逐字符交叉验证。
 
 版本纪律：每次改动 bump `package.json` 并在 [CHANGELOG.md](./CHANGELOG.md) 记一笔。
+
+## 与其它输入框插件的关系
+
+本插件只做**编辑体验**这一层。其它输入框类插件做的是别的事情——互不重叠，可以同时安装：
+
+| 插件 | 做什么 | 与本插件的重叠 |
+| --- | --- | --- |
+| **dsh-composer-live**（本插件） | Markdown 实时渲染、代码块、列表/引用/表格、格式工具栏、粘贴处理 | — |
+| dsh-composer-plus | 输入框里的模型切换、推理力度、账号显示 | 无——不同层面 |
+| dsh-client-composer-enter | 交换 Enter/Shift+Enter 的发送行为 | 无——只改键位映射 |
+| dsh-prompt-history | ↑ 调历史输入（带前缀搜索） | 无——是回忆，不是渲染 |
 
 ## FAQ
 
@@ -175,6 +198,10 @@ E2E runner 要求被测实例已部署当前源码，路径全部由环境变量
 
 **DSH 升级会弄坏它吗？**
 零服务注入 + `data-` 属性锚定让它对日常升级（类名哈希变化、client API 重构）免疫。当官方输入框**架构本身**变化时——比如 0.1.1 → 0.1.5 从 textarea 换成 Lexical——插件需要重写。本插件正是那次重写的产物：`dsh-composer-md` 是它的 0.1.x 前身，现已停止维护。
+
+## 反馈
+
+发现 bug、字符错位、或某个 DSH 版本上表现异常？欢迎[提 issue](https://github.com/zeusxx/dsh-composer-live/issues)——附上截图和 DSH 版本号会很有帮助。功能建议（新快捷键、高亮语言、块样式）同样欢迎。
 
 ## 许可证
 
