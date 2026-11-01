@@ -8,7 +8,7 @@
 ![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5)
 ![Tests](https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f)
 
-![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](docs/screenshots/demo.gif)
+![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 
 dsh-composer-live turns the DSH Web input box into an Open-WebUI-style live editor: you type Markdown, it renders as you type — bold, italic, code blocks with syntax highlighting, lists, quotes, tables — while the draft itself stays plain Markdown source, so what you send is exactly what you typed.
 
@@ -20,15 +20,15 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 
 ### Live markdown rendering
 
-![Live markdown rendering in the composer](docs/screenshots/overview.png)
+![Live markdown rendering in the composer](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/overview.png)
 
 ### Code blocks
 
-![Code block with syntax highlighting and language label](docs/screenshots/code-block.png)
+![Code block with syntax highlighting and language label](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/code-block.png)
 
 ### Selection toolbar
 
-![Floating format bar above the selection](docs/screenshots/selection-bar.png)
+![Floating format bar above the selection](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/selection-bar.png)
 
 ## Features
 

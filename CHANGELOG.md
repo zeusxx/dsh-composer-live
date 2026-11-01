@@ -2,6 +2,10 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.19（2026-11-01）
+
+**README 图片引用改为 GitHub 绝对 URL（npm 包页面渲染修复）。** npmjs.com 不解析包内相对路径图片——0.2.18 的 demo GIF 与三张截图在 npm 页面会显示破图。全部改为 `raw/main` 绝对链接，GitHub 与 npm 双端正常渲染。GitHub 仓库同步补齐了全部 8 个版本的 Release（含正文）并加上 `dsh-plugin` topic（dsh-plugin.org 自动发现收录）。
+
 ## 0.2.18（2026-11-01）
 
 **文档与发布物料更新（功能零变更）——README 双语大修 + 首个动态演示 GIF。**

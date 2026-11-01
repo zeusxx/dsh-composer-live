@@ -8,7 +8,7 @@
 ![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5)
 ![Tests](https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f)
 
-![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](docs/screenshots/demo.gif)
+![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 
 dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编辑器：你打 Markdown，它边打边渲染——加粗、斜体、带语法高亮的代码块、列表、引用、表格——而草稿本身始终是纯 Markdown 源文本，发送出去的就是你输入的原文。
 
@@ -20,15 +20,15 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 
 ### Markdown 实时渲染
 
-![输入框实时渲染效果](docs/screenshots/overview.png)
+![输入框实时渲染效果](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/overview.png)
 
 ### 代码块
 
-![代码块语法高亮与语言标签](docs/screenshots/code-block.png)
+![代码块语法高亮与语言标签](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/code-block.png)
 
 ### 选区浮动格式条
 
-![选区上方浮现的浮动格式条](docs/screenshots/selection-bar.png)
+![选区上方浮现的浮动格式条](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/selection-bar.png)
 
 ## 功能
 
