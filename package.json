@@ -1,7 +1,8 @@
 {
   "name": "dsh-composer-live",
-  "version": "0.2.20",
-  "description": "DSH Web 0.1.5+ 输入框增强（Lexical contenteditable 架构版）：markdown 实时渲染 + 代码块语法高亮/段落级等宽 + 格式工具栏（常驻顶条 + 选区浮动条）+ 70vh 展开 + 大段粘贴包代码块 + Esc 分发。纯浏览器端插件，零依赖，不改官方源码。仿 Open WebUI 输入体验。",
+  "version": "0.2.21",
+  "description": "Type Markdown, see it rendered live — Open-WebUI-style composer for DeepSeek Harness (DSH) web. Syntax-highlighted code blocks, task lists, format toolbars, smart paste. Pure browser-side, zero dependencies.",
+  "icon": "./assets/icon-180.png",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -18,6 +19,7 @@
     "README.zh-CN.md",
     "CHANGELOG.md",
     "docs",
+    "assets",
     "LICENSE"
   ],
   "scripts": {
@@ -32,6 +34,9 @@
       "inject": [],
       "platform": "web",
       "immediately": true
+    },
+    "engines": {
+      "dsh": ">=0.1.5-rc.2"
     }
   },
   "peerDependencies": {

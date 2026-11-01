@@ -1,12 +1,16 @@
-# dsh-composer-live
+<p align="center"><img src="https://github.com/zeusxx/dsh-composer-live/raw/main/assets/icon-180.png" width="96" alt="dsh-composer-live logo"></p>
 
-**Live Markdown rendering and typing enhancements for the DeepSeek Harness (DSH) web composer.**
+<h1 align="center">dsh-composer-live</h1>
 
-[English](./README.md) · [简体中文](./README.zh-CN.md)
+<p align="center"><b>Type Markdown, see it rendered live</b> — Open-WebUI-style composer for the DeepSeek Harness (DSH) web.</p>
 
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5)
-![Tests](https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f)
+<p align="center">[English](./README.md) · [简体中文](./README.zh-CN.md)</p>
+
+<p align="center">
+<img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
+<img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
+<img src="https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f" alt="tests">
+</p>
 
 ![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 

@@ -2,6 +2,16 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.21（2026-11-01）
+
+**插件市场元数据补全（用户在 dshmarket 市场条目发现信息不全）：宿主声明、插件图标、双语描述门面。**
+
+- **新增 `dsh.engines.dsh: ">=0.1.5-rc.2"` 宿主声明**——此前市场条目显示「未声明宿主要求」标签；声明后插件管理器的版本兼容判断与市场信息都有明确依据。
+- **新增插件图标**（`assets/icon-180.png` / `icon-256.png`）：墨底圆角方 + 青瓷闪电 + 暖白光标线（Chrome 矢量渲染截图生成）；`package.json` 增 `icon` 字段，npm files 白名单与发布白名单同步收录。
+- **package.json description 英文化精炼**（旧的是中文长句，npm 搜索与英文市场不友好）：`Type Markdown, see it rendered live — Open-WebUI-style composer for DeepSeek Harness (DSH) web. …`
+- **README（双语）顶部品牌化**：居中 logo + 标题 + 一句话卖点 + 徽章居中。
+- 同步更新 GitHub 仓库 description / homepage（市场英文描述的抓取源）。
+
 ## 0.2.20（2026-11-01）
 
 **demo GIF 重录：修正分镜与列表自动续项的交互，任务勾选框与代码块补全过程正确呈现。**

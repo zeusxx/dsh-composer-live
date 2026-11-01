@@ -1,12 +1,16 @@
-# dsh-composer-live
+<p align="center"><img src="https://github.com/zeusxx/dsh-composer-live/raw/main/assets/icon-180.png" width="96" alt="dsh-composer-live 图标"></p>
 
-**为 DeepSeek Harness（DSH）Web 输入框带来 Markdown 实时渲染与输入体验增强。**
+<h1 align="center">dsh-composer-live</h1>
 
-[English](./README.md) · [简体中文](./README.zh-CN.md)
+<p align="center"><b>打 Markdown，边打边渲染</b>——给 DeepSeek Harness（DSH）Web 输入框带来 Open WebUI 风格的实时编辑体验。</p>
 
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5)
-![Tests](https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f)
+<p align="center">[English](./README.md) · [简体中文](./README.zh-CN.md)</p>
+
+<p align="center">
+<img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
+<img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
+<img src="https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f" alt="tests">
+</p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 
