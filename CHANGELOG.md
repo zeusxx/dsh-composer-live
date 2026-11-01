@@ -2,6 +2,14 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.20（2026-11-01）
+
+**demo GIF 重录：修正分镜与列表自动续项的交互，任务勾选框与代码块补全过程正确呈现。**
+
+- 0.2.18 的 GIF 分镜在列表行尾按 Shift+Enter 后**又手打了 `- `**——续项功能已自动补前缀，实际文本变成 `- - [x]`（双横线嵌套），勾选胶囊的渲染条件不满足，GIF 里勾选框没出现（用户指正）。
+- 修正后的分镜**顺着续项行为**：Shift+Enter 接受自动补的 `- ` 直接打 `[x]…`（勾选胶囊正常渲染），任务行后空项再按一次 Shift+Enter **顺带演示「空项退出列表」**，然后围栏补全成代码块。
+- 画面防线加固：hero 态优先（不再点「选择工作区」——进工作区会展开侧栏露出真实工作区名）；`[class*="workspaceLabel"]` 隐藏（hero 输入组顶部的工作区选择器）；顶部遮罩 52→100px。DOM 级验证：`dsh-cl-task-done` 勾选胶囊、`dsh-cl-dl` 删除线、`dsh-cl-tok-*` 语法高亮 class 全部在位。
+
 ## 0.2.19（2026-11-01）
 
 **README 图片引用改为 GitHub 绝对 URL（npm 包页面渲染修复）。** npmjs.com 不解析包内相对路径图片——0.2.18 的 demo GIF 与三张截图在 npm 页面会显示破图。全部改为 `raw/main` 绝对链接，GitHub 与 npm 双端正常渲染。GitHub 仓库同步补齐了全部 8 个版本的 Release（含正文）并加上 `dsh-plugin` topic（dsh-plugin.org 自动发现收录）。
@@ -39,14 +47,15 @@
 - **新增 CDP trusted op**（run-e2e.mjs 拦截执行，合成事件不触发浏览器默认行为的结构性盲区）：`cdpType`（Input.insertText 逐字打字）/ `cdpKey`（trusted keydown）/ `mouseSelect`（真实鼠标拖选）/ `dblClick` / `tripleClick` / `shiftClick`；页内新增 op：`typeChars`（execCommand 逐字符）/ `deleteKey`（前向删除）/ `selectWord` / `expectSel`（选区投影区间断言）/ `stressWrap`（时序压力探测器）。
 - 单测 188 → 206 项（`_decideWrapAction` 此前零覆盖，补 18 条形态测试）。
 
+## 0.2.15（2026-10-22）
 
-**输入 `/` 命令/技能名时文字无颜色、hover 被色块遮挡（用户 0.2.1 实测反馈）。**
+**输入 `/` 命令/技能名时文字无颜色、hover 被色块遮挡（用户 0.2.1 实测反馈）。** 本版本还包含了下面 0.2.14 段（工具栏迁出输入卡）的变更——0.2.14 版本号未单独发布。
 
 - **根因**：0.2.x 官方把 `/anatomy` 这类技能命令识别为「文本引用装饰」`[data-composer-text-ref]`——span 带 `color: var(--dsw-alias-state-business-primary)`（主题引用色）与 `:hover { background: var(--dsw-alias-state-business-tertiary) }`。插件把编辑器文字 `-webkit-text-fill-color: transparent` 后由 overlay 重绘，装饰的 `color` 因此不可见（文字显示为普通正文色）；而 hover 背景留在编辑器层（`z-index: 1`，画在 overlay 之上），会整块盖住渲染文字。
 - **修法**：`buildAnchors` 记录 `[data-composer-text-ref]` 的投影区间（挂在 `anchors.refs`），`renderCharOverlay` 按绝对 offset 给对应字符加 `dsh-cl-ref` class，颜色取同一主题变量 `--dsw-alias-state-business-primary`（明暗主题自动跟随，取不到时回退 `#3b82f6`）；同时注入 `[data-composer-text-ref]:hover { background: transparent !important }` 禁掉编辑器层 hover 背景，杜绝遮挡。
 - 单测 188 项通过。
 
-## 0.2.14（2026-10-06）
+## 0.2.14（2026-10-06，未单独发布——随 0.2.15 一同发布）
 
 **工具栏迁出输入卡：放卡外正上方，不再占输入框内部空间（用户反馈「工具栏阻碍输入框空间」）。**
 
