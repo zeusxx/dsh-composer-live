@@ -2,6 +2,10 @@
 
 > 更新日志以中文记录。Changelog entries are written in Chinese.
 
+## 0.2.22（2026-11-01）
+
+**图标空白修复**：0.2.21 的图标生成脚本漏设视口尺寸——Chrome 默认视口约 800×600，180px 的 SVG 缩在左上角，整幅截图 90% 是白色空白（README 顶部与市场引用都是「一小角图标+大片空白」）。补 `Emulation.setDeviceMetricsOverride` + 截图 clip 后重生成，图标主体铺满画幅。
+
 ## 0.2.21（2026-11-01）
 
 **插件市场元数据补全（用户在 dshmarket 市场条目发现信息不全）：宿主声明、插件图标、双语描述门面。**

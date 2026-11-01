@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-live",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "description": "Type Markdown, see it rendered live — Open-WebUI-style composer for DeepSeek Harness (DSH) web. Syntax-highlighted code blocks, task lists, format toolbars, smart paste. Pure browser-side, zero dependencies.",
   "icon": "./assets/icon-180.png",
   "type": "module",
