@@ -83,6 +83,22 @@ const CJK30 = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸子�
 const CJK20 = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸"; // 20 字
 const THREE_LINES = ["第一行内容甲乙丙", "第二行内容丁戊己", "第三行内容庚辛壬"].join("\n"); // 投影 26 字
 const THREE_LINES_PROJ = THREE_LINES; // bi-lines(br) 与 bi-text(字面\n) 两形态投影同构，别名以示语义
+
+/** V7 粘贴 MD 全家桶：标题/粗斜/行内码/链接/代码块/引用/有序无序列表/任务/表格 */
+const MD_SUITE = [
+	"# 标题一",
+	"普通段落带 **粗体**、*斜体*、`行内代码` 和 [链接](https://example.com)。",
+	"> 引用第一行",
+	"> 引用第二行",
+	"- 无序列表项 A",
+	"1. 有序第一",
+	"```js",
+	"const x = 42;",
+	"```",
+	"| 列一 | 列二 |",
+	"| --- | --- |",
+	"- [x] 已完成任务",
+].join("\n");
 /** 选区包裹断言：s.slice(from,to) 前后加标记（默认 **） */
 const wrapSel = (s, from, to, mark = "**") => s.slice(0, from) + mark + s.slice(from, to) + mark + s.slice(to);
 
@@ -1073,6 +1089,76 @@ export const SCENARIOS = [
 			{ type: "key", key: "a", ctrl: true },
 			{ type: "cdpKey", key: "b", ctrl: true },
 			{ type: "expectSrc", expect: "**" + THREE_LINES_PROJ + "**" },
+		],
+	},
+	// ===== V 组（2026-11-08 v0.2.18）：引用行多行粘贴续前缀 + 粘贴 MD 渲染固化 =====
+	// pasteClip 走真实 Ctrl+V 同事件管线（先过插件 paste handler 再落官方）。
+	// 语义：第一行接光标处并入当前段落（原样），第二行起补 "> "；空行补裸 ">"；
+	// 已是引用块/单行/普通行光标 → 不处理（放行官方原样插入）。
+	{
+		name: "V1-quote-paste-multiline", group: "V", focus: "核心：引用行粘贴 3 行续前缀",
+		channel: "bi-text", text: () => "> 引用起始行",
+		ops: [
+			{ type: "pasteClip", text: "第一段\n第二行\n第三行" },
+			{ type: "expectSrc", expect: "> 引用起始行第一段\n> 第二行\n> 第三行" },
+		],
+	},
+	{
+		name: "V2-quote-paste-already-quoted", group: "V", focus: "粘贴内容本身是引用块 → 原样（防双重前缀）",
+		channel: "bi-text", text: () => "> 引用起始行",
+		ops: [
+			{ type: "pasteClip", text: "> 甲\n> 乙" },
+			{ type: "expectSrc", expect: "> 引用起始行> 甲\n> 乙" },
+		],
+	},
+	{
+		name: "V3-plain-paste-no-quote", group: "V", focus: "普通行光标粘贴多行 → 不加前缀（不误伤回归）",
+		channel: "bi-text", text: () => "普通段落",
+		ops: [
+			{ type: "pasteClip", text: "甲\n乙" },
+			{ type: "expectSrc", expect: "普通段落甲\n乙" },
+		],
+	},
+	{
+		name: "V4-quote-paste-single-line", group: "V", focus: "单行粘贴 → 原样（接当前行后）",
+		channel: "bi-text", text: () => "> 引用起始行",
+		ops: [
+			{ type: "pasteClip", text: "单行文本" },
+			{ type: "expectSrc", expect: "> 引用起始行单行文本" },
+		],
+	},
+	{
+		name: "V5-quote-paste-blank-middle", group: "V", focus: "粘贴含空行 → 空行补裸 >（保持引用块连续）",
+		channel: "bi-text", text: () => "> 引用起始行",
+		ops: [
+			{ type: "pasteClip", text: "上行\n\n下行" },
+			{ type: "expectSrc", expect: "> 引用起始行上行\n>\n> 下行" },
+		],
+	},
+	{
+		name: "V6-quote-paste-render", group: "V", focus: "渲染层验证：粘贴后引用标记 ≥3（原行+新 2 行；第一段并入原行不新增标记）",
+		channel: "bi-text", text: () => "> 引用起始行",
+		ops: [
+			{ type: "pasteClip", text: "第一段\n第二行\n第三行" },
+			{ type: "expectSrc", expect: "> 引用起始行第一段\n> 第二行\n> 第三行" },
+			{ type: "snapshotClass", selector: ".dsh-cl-qmark", min: 3 },
+		],
+	},
+	{
+		name: "V7-paste-md-suite", group: "V", focus: "功能 2 固化：粘贴 MD 全家桶全部渲染（标题/粗斜/行内码/链接/代码块/引用/列表/任务/表格）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: MD_SUITE },
+			{ type: "expectClass", selector: ".dsh-cl-heading" },
+			{ type: "expectClass", selector: ".dsh-cl-strong" },
+			{ type: "expectClass", selector: ".dsh-cl-em" },
+			{ type: "expectClass", selector: ".dsh-cl-cd" },
+			{ type: "expectClass", selector: ".dsh-cl-lk" },
+			{ type: "expectClass", selector: ".dsh-cl-lang" },
+			{ type: "expectClass", selector: ".dsh-cl-qbg" },
+			{ type: "expectClass", selector: ".dsh-cl-lmark" },
+			{ type: "expectClass", selector: ".dsh-cl-task" },
+			{ type: "expectClass", selector: ".dsh-cl-tmark" },
 		],
 	},
 ];

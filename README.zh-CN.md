@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-220%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
 </p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -102,7 +102,7 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 
 ## 实测版本
 
-每个版本发布前都在两个真实实例上跑完整 129 场景 E2E（覆盖两代支持的架构）：
+每个版本发布前都在两个真实实例上跑完整 136 场景 E2E（覆盖两代支持的架构）：
 
 | DSH 版本 | 状态 |
 | --- | --- |
@@ -168,8 +168,8 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 ## 开发
 
 ```bash
-node test-live.cjs    # 206 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs  # 129 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node test-live.cjs    # 220 项单测（纯函数，无需浏览器）
+node e2e/run-e2e.mjs  # 136 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
 ```
 
 E2E runner 要求被测实例已部署当前源码，路径全部由环境变量推导：`DSH_CL_PORT`（默认 8124）与 `DSH_CL_DSH_HOME`（默认取 `DSH_HOME`，再默认 `~/.dsh`）定位部署副本做版本对照，鉴权 cookie 自动获取。完整变量表见 [e2e/README.md](./e2e/README.md)。

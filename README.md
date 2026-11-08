@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-206%20unit%20%C2%B7%20129%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-220%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
 </p>
 
 ![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -106,7 +106,7 @@ The official composer already provides — and this plugin deliberately does not
 - A **Chromium-based browser** (Chrome, Edge, …): the transparency technique relies on `-webkit-text-fill-color`.
 - OS-independent — it is pure DOM/CSS with no native dependencies.
 
-**Verified DSH versions** — every release runs the full 129-scenario E2E suite on two live instances covering both supported generations:
+**Verified DSH versions** — every release runs the full 136-scenario E2E suite on two live instances covering both supported generations:
 
 | DSH version | Status |
 | --- | --- |
@@ -177,8 +177,8 @@ This plugin focuses purely on the **editing experience**. Other composer plugins
 ## Development
 
 ```bash
-node test-live.cjs    # 206 unit tests (pure functions, no browser needed)
-node e2e/run-e2e.mjs  # 129-scenario × 10-invariant E2E suite against a live instance
+node test-live.cjs    # 220 unit tests (pure functions, no browser needed)
+node e2e/run-e2e.mjs  # 136-scenario × 10-invariant E2E suite against a live instance
 ```
 
 The E2E runner expects a DSH web instance with this source deployed and derives everything from environment variables: `DSH_CL_PORT` (default 8124) and `DSH_CL_DSH_HOME` (defaults to `DSH_HOME`, then `~/.dsh`) locate the deployed copy for a version check; the auth cookie is fetched automatically. See [e2e/README.md](./e2e/README.md) for the full variable list.

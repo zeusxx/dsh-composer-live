@@ -876,6 +876,30 @@ window.__ModuleLoader__.load({
 			return { insert: pad + "```\n" + text + "\n```\n", pad: pad, lines: lines.length };
 		}
 
+		// v0.2.18 引用行多行粘贴续前缀（Typora 同款行为）：光标在引用行（> 开头）
+		// 且粘贴多行纯文本时，从第二行起每行补 "> " 前缀并入引用块。防误伤四条：
+		// ①单行粘贴不动（接在当前行后无需前缀）；②粘贴内容本身已是引用块
+		// （非空行全部带 >）不动——避免双重前缀；③混合内容只给不带 > 的行补
+		// （保留嵌套引用 >> 与用户已有前缀形态）；④**第一行永远原样**——它接在
+		// 光标处并入当前引用段落（当前行行首已有前缀，给它再加会落在行中间）。
+		// 空行补裸 ">"（无尾随空格）。与 decidePasteWrap 的优先级：引用分支先判
+		// ——引用语境里粘贴大段代码也续前缀（语境优先），撤销后可用工具栏手动包。
+		function decideQuotePaste(value, pos, pasted) {
+			const text = String(pasted || "");
+			if (!text || text.indexOf("\n") < 0) return null;
+			const lines = text.split(/\r?\n/);
+			if (lines.length < 2) return null;
+			const nonEmpty = lines.filter((l) => l.trim());
+			if (!nonEmpty.length) return null;
+			if (nonEmpty.every((l) => /^\s*>/.test(l))) return null;
+			const before = String(value || "").slice(0, pos == null ? 0 : pos);
+			const beforeLines = before.split("\n");
+			const curLine = beforeLines[beforeLines.length - 1];
+			if (!/^\s*>/.test(curLine)) return null;
+			const insert = lines.map((l, i) => (i === 0 || /^\s*>/.test(l) ? l : (l.trim() ? "> " + l : ">"))).join("\n");
+			return { insert: insert, lines: lines.length };
+		}
+
 		function stateKey(st) {
 			return st.inCode + "|" + st.lang + "|" + (st.fenceOpen ? "o" : "") + (st.fenceClose ? "c" : "") + "|" + (st.kind ? st.kind.type : "");
 		}
@@ -1730,6 +1754,30 @@ window.__ModuleLoader__.load({
 					const src = anchorsText(anchors);
 					const caret = domOffsetOf(input2, anchors, true);
 					if (caret == null) return;
+					// v0.2.18 引用续前缀先于包代码块判定（引用语境优先——见 decideQuotePaste 注释）
+					// v0.2.18 引用续前缀先于包代码块判定（引用语境优先——见 decideQuotePaste 注释）。
+					// 插入通道用「改写剪贴板 + 重放合成 paste」而非 insertInline：paste 上下文里
+					// 逐行 beforeinput 序列会撞 Lexical 的 selection 竞态丢首段（E2E V1 实测），
+					// 重放走官方管线原生插入（单次进撤销栈、字面 \n 形态渲染层本就支持）。
+					const quote = decideQuotePaste(src, caret, text);
+					if (quote) {
+						e.preventDefault();
+						e.stopPropagation();
+						// 重放延后 120ms：paste 事件处理期间 Lexical 的 selection/undo 后处理
+						// 窗口内立即重放会丢首段（0.1.5 的 paste 管线实测；0.2.x 无此问题——
+						// 两代统一延后，120ms 对用户无感）。
+						setTimeout(() => {
+							const dt = new DataTransfer();
+							dt.setData("text/plain", quote.insert);
+							const replay = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+							Object.defineProperty(replay, "clipboardData", { value: dt });
+							replay.__dshClSynthetic = true; // handler 首行已判：自己派发的合成 paste 放行
+							input2.dispatchEvent(replay);
+						}, 120);
+						toast(card, "已将 " + quote.lines + " 行内容并入引用块（Ctrl+Z 撤销）");
+						liteRaf();
+						return;
+					}
 					const wrap = decidePasteWrap(src, caret, text);
 					if (!wrap) return;
 					e.preventDefault();
@@ -2051,6 +2099,7 @@ window.__ModuleLoader__.load({
 		exports._decideWrapAction = decideWrapAction;
 		exports._isCursorInCodeBlock = isCursorInCodeBlock;
 		exports._decidePasteWrap = decidePasteWrap;
+		exports._decideQuotePaste = decideQuotePaste;
 		exports._codeParaFlags = codeParaFlags;
 		exports._paraHasChip = paraHasChip;
 		return module.exports;

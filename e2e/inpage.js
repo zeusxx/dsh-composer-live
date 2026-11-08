@@ -260,6 +260,8 @@
 	 *   "caretRatio"   按投影长度比例设光标
 	 *   "caretSweep"   n 个均匀点位连续设置（触发 selectionchange 渲染路径）
 	 *   "pasteLiteral" 光标处单次 insertText（字面 \n 形态的编辑期插入）
+	 *   "pasteClip"    合成 ClipboardEvent paste（text/plain）——真实 Ctrl+V 同事件
+	 *                  管线（过插件 paste handler：引用续前缀/大段包代码块）（async 兼容）
 	 *   "selectRange"  投影 offset 区间选中 {from,to}
 	 *   "selectLine"   选中光标所在整行
 	 *   "selectWord"   选光标所在词（双击选择语义的程序化近似：CJK 逐字 / 拉丁按词边界）
@@ -334,6 +336,19 @@
 			for (var i = 1; i <= n; i++) setSelCollapsed(input, anchors, clamp(Math.round(src.length * i / (n + 1))));
 		} else if (o.type === "pasteLiteral") {
 			bi(input, "insertText", String(o.text || ""));
+		} else if (o.type === "pasteClip") {
+			// 合成 ClipboardEvent paste（text/plain）——与真实 Ctrl+V 同事件管线：
+			// 先经过插件 capture 层 paste handler（引用续前缀/大段包代码块），未处理
+			// 才落官方 paste 管线。V 组引用粘贴场景专用（pasteLiteral 走的是
+			// beforeinput insertText 编辑期通道，不经过 paste handler，测不到本功能）。
+			var dtP = new DataTransfer();
+			dtP.setData("text/plain", String(o.text || ""));
+			var evP = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+			Object.defineProperty(evP, "clipboardData", { value: dtP });
+			input.dispatchEvent(evP);
+			// 插件的引用续前缀通道是「120ms 延后重放」（避 Lexical paste 竞态）——
+			// 等重放插入落定再返回，否则后续断言 op 会跑在插入完成前。
+			await new Promise(function (r) { setTimeout(r, 600); });
 		} else if (o.type === "selectRange") {
 			var a = clamp(o.from);
 			var b = clamp(o.to);

@@ -272,6 +272,26 @@ t('no wrap content already fenced', pw('', 0, '```\ncode\n```\n' + code10), null
 t('no wrap empty paste', pw('', 0, ''), null);
 t('wrap by size threshold', pw('', 0, 'let x = 1; '.repeat(500)), { insert: '```\n' + 'let x = 1; '.repeat(500) + '\n```\n', pad: '', lines: 1 });
 
+// ===== 引用行多行粘贴续前缀（decideQuotePaste——2026-11-08 v0.2.18 新增）=====
+// 语义：光标在引用行 + 粘贴≥2行纯文本（非空行不全带 >）→ 从第二行起补前缀
+// （第一行接光标处并入当前段落，原样）；已带 > 的行原样（含嵌套 >>）；空行补
+// 裸 >；单行/普通行/全引用块放行 null。
+const qp = mod._decideQuotePaste;
+t('quote paste 3 lines', qp('> 引用行', 5, '第一行\n第二行\n第三行'), { insert: '第一行\n> 第二行\n> 第三行', lines: 3 });
+t('quote paste keeps blank as bare >', qp('> 引用', 4, '上行\n\n下行'), { insert: '上行\n>\n> 下行', lines: 3 });
+t('quote paste already quoted block → null', qp('> 引用', 4, '> 甲\n> 乙'), null);
+t('quote paste mixed keeps existing >', qp('> 引用', 4, '普通\n> 已带\n普通'), { insert: '普通\n> 已带\n> 普通', lines: 3 });
+t('quote paste nested >> kept as-is', qp('> 引用', 4, '普通\n>> 嵌套'), { insert: '普通\n>> 嵌套', lines: 2 });
+t('quote paste single line → null', qp('> 引用', 4, '只有一行'), null);
+t('quote paste plain line cursor → null', qp('普通行', 3, '第一\n第二'), null);
+t('quote paste cursor after bare >', qp('>', 1, '第一\n第二'), { insert: '第一\n> 第二', lines: 2 });
+t('quote paste all blank lines → null', qp('> 引用', 4, '\n\n'), null);
+t('quote paste empty → null', qp('> 引用', 4, ''), null);
+t('quote paste crlf split', qp('> 引用', 4, '甲\r\n乙'), { insert: '甲\n> 乙', lines: 2 });
+t('quote paste indented quote cursor', qp('  > 缩进引用', 8, '甲\n乙'), { insert: '甲\n> 乙', lines: 2 });
+t('quote paste cursor mid quote line', qp('> 前半后半', 4, '甲\n乙'), { insert: '甲\n> 乙', lines: 2 });
+t('quote paste 10-line code also prefixed (quote beats wrap)', (() => { const r = qp('> 引用', 4, code10); return r !== null && r.insert.split('\n').slice(1).every((l) => /^> /.test(l)); })(), true);
+
 // ===== 块状态签名（stateKey）=====
 const sk = mod._stateKey;
 t('stateKey plain', sk({ inCode: false, lang: '', fenceOpen: false, fenceClose: false, kind: null }), 'false|||');
