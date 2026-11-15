@@ -2,25 +2,33 @@
 
 <h1 align="center">dsh-composer-live</h1>
 
-<p align="center"><b>Type Markdown, see it rendered live</b> — Open-WebUI-style composer for the DeepSeek Harness (DSH) web.</p>
+<p align="center"><b>Type Markdown, see it rendered live</b> — with a caret-aware source/reading split and theme-following colors.</p>
 
 <p align="center">[English](./README.md) · [简体中文](./README.zh-CN.md)</p>
 
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-220%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
 </p>
 
 ![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 
 dsh-composer-live turns the DSH Web input box into an Open-WebUI-style live editor: you type Markdown, it renders as you type — bold, italic, code blocks with syntax highlighting, lists, quotes, tables — while the draft itself stays plain Markdown source, so what you send is exactly what you typed.
 
-It is a **pure browser-side plugin**: zero runtime dependencies, no service injection, no patches to official code. It layers on top of the official 0.1.5 Lexical composer without touching what DSH already does natively.
+Since **v0.3.0** it also does what Obsidian's live preview does: **the line your caret is on shows the raw Markdown** (editable, markers visible), **every other line renders in clean reading form** — markers hidden, `-` list items become bullet dots, `- [ ]` / `- [x]` tasks become real checkboxes. And all colors now **follow your theme/skin** via official DSH variables — inline code looks the same while typing as it does after sending.
+
+It is a **pure browser-side plugin**: zero runtime dependencies, no service injection, no patches to official code. It layers on top of the official 0.1.5+ Lexical composer without touching what DSH already does natively.
 
 > Looking for the DSH **0.1.x** (textarea composer) version? That's [`dsh-composer-md`](#faq), the predecessor of this plugin — discontinued.
 
 ## Screenshots
+
+### Focus-line source/reading split (v0.3.0)
+
+Caret line shows raw markers (with the blinking caret); every other line is reading form — hidden `##`/`>`/`**`, bullet dots, checkbox tasks, ordered numbers kept.
+
+![Focus line: source form on the caret line, reading form everywhere else](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/focus-line.png)
 
 ### Live markdown rendering
 
@@ -36,9 +44,19 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 
 ## Features
 
+### Focus-line source/reading split (v0.3.0)
+
+Obsidian-style live preview: **the line your caret/selection is on shows raw Markdown markers** (editable), **every other line renders in reading form** — inline markers (`**`, `` ` ``, `~~`, `[]()`) and `##` / `>` prefixes are hidden, unordered `-` becomes a bullet dot, task `[ ]` / `[x]` become real checkboxes (checked = green with a tick), ordered lists keep their numbers. Table rows and code fences always stay in source form (they are editing structure). When the composer is not focused, all lines are in reading form — a clean preview.
+
+Hiding is paint-only (`color:transparent` on the absolutely-positioned render segments; symbols drawn as pseudo-elements on those segments) — character slots are preserved, so caret alignment is unaffected.
+
+### Theme-following colors (v0.3.0)
+
+No hardcoded palette any more: accents follow `--dsw-alias-link`, inline-code background follows `--dsw-alias-markdown-inline-code` (**typing and sent-message colors finally match**), code-block background follows `--dsw-alias-markdown-code-block`, syntax tokens follow the official `--shiki-token-*` theme, markers follow `--dsw-alias-label-dimmed`, task-done follows the success token, toolbar/toast follow surface tokens. Change skin or theme and the composer follows automatically; on hosts without these variables (DSH 0.1.x) it falls back to the built-in light/dark palette.
+
 ### Live Markdown rendering
 
-- Inline styles render as you type: `**bold**`, `*italic*`, `` `code` `` (brand-blue capsule), `~~strikethrough~~`, `[links](url)` (whitelisted protocols), `![images](url)` capsules.
+- Inline styles render as you type: `**bold**`, `*italic*`, `` `code` `` (theme accent capsule), `~~strikethrough~~`, `[links](url)` (whitelisted protocols), `![images](url)` capsules.
 - **Character-perfect caret alignment.** Marker characters (`**`, `` ` ``, `~~`, `[]()`) are dimmed but keep their exact width, and bold/headings use paint-only faux-bold — so the rendered line stays character-for-character aligned with the invisible editor text. The caret lands precisely everywhere, including inside formatted spans, with zero drift while typing.
 - Task list items: `- [ ]` / `- [x]` render as checkbox capsules; completed items get struck through.
 - The draft always remains plain Markdown source. Rendering is purely visual — the message you send is the source text you typed.
@@ -49,7 +67,7 @@ It is a **pure browser-side plugin**: zero runtime dependencies, no service inje
 - **Shift+Enter on an open fence** auto-completes a closed block (blank line + closing fence + trailing line) and puts the caret inside, ready to code.
 - ↓ on the last content line of a closed block jumps below the block.
 - Zero-dependency regex syntax highlighting: js/ts/py/sh/json/yml/css/html, auto-detected from content when unlabeled — Chinese prose is never misdetected as code.
-- Language label on the fence line; GitHub-dark / GitHub-light block themes; fence characters dimmed.
+- Language label on the fence line; token colors follow the official shiki theme (GitHub palette as fallback); fence characters dimmed.
 - Monospace: while a closed code block is present, the whole composer (editor + overlay) switches to a monospace stack synced with the official code font. CJK characters deliberately stay on the UI font so line wrapping never diverges between the two layers.
 
 ### Lists, quotes, tables

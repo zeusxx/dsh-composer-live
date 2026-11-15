@@ -268,14 +268,17 @@ window.__ModuleLoader__.load({
 				// 任务列表勾选样式（v0.2.10）：`- [ ] 任务` / `- [x] 任务`——标记三字符
 				// 整体进胶囊背景（字符流不变，光标对齐不受影响）；已勾时行内容加划线
 				// （<s> → tokenizeViaDom 映射 dsh-cl-dl，line-through 是 paint-only）。
+				// v0.3.0：有序标记（1. / 2)）追加 dsh-cl-lnum——阅读形态下无序符号化
+				// 成圆点、有序保留数字（数字本身是内容）。
+				const lmCls = "dsh-cl-lmark" + (/^\d/.test(kind.mark) ? " dsh-cl-lnum" : "");
 				const tm = kind.text.match(/^(\[(?: |x|X)\])(\s+)([\s\S]*)$/);
 				if (tm) {
 					const done = tm[1].charAt(1) !== " ";
-					return escapeHtml(kind.indent || "") + '<span class="dsh-cl-lmark">' + escapeHtml(kind.mark) + '</span>' + escapeHtml(kind.space)
+					return escapeHtml(kind.indent || "") + '<span class="' + lmCls + '">' + escapeHtml(kind.mark) + '</span>' + escapeHtml(kind.space)
 						+ '<span class="dsh-cl-task' + (done ? " dsh-cl-task-done" : "") + '">' + escapeHtml(tm[1]) + '</span>' + escapeHtml(tm[2])
 						+ (done ? "<s>" + inlineParse(tm[3], noMono) + "</s>" : inlineParse(tm[3], noMono));
 				}
-				return escapeHtml(kind.indent || "") + '<span class="dsh-cl-lmark">' + escapeHtml(kind.mark) + '</span>' + escapeHtml(kind.space) + inlineParse(kind.text, noMono);
+				return escapeHtml(kind.indent || "") + '<span class="' + lmCls + '">' + escapeHtml(kind.mark) + '</span>' + escapeHtml(kind.space) + inlineParse(kind.text, noMono);
 			}
 			if (kind.type === "table") return '<span class="dsh-cl-tmark">' + escapeHtml(kind.raw) + "</span>";
 			return inlineParse(line, noMono);
@@ -359,6 +362,53 @@ window.__ModuleLoader__.load({
 		/** 段落级代码态列表（供编辑器段落打等宽 class；行=段落）。 */
 		function codeParaFlags(lines) {
 			return computeBlockStates(lines).map((st) => st.inCode);
+		}
+
+		// ---------- 焦点行（v0.3.0）：光标/选区行=源码形态，其余行=阅读形态 ----------
+		// Obsidian「实时预览」式：编辑哪行哪行显示源码标记，其余行呈现阅读效果
+		//（星号隐身、列表圆点化、任务复选框化）。「隐身」只是渲染段 color:transparent，
+		// 字符占位天然保留——光标对齐零排版风险。
+
+		/** 投影 offset → 行号（行按 \n 切分；超尾回落最后一行）。 */
+		function lineIndexOfOffset(lines, off) {
+			let acc = 0;
+			for (let i = 0; i < lines.length; i++) {
+				const len = lines[i].length + 1;
+				if (off < acc + len) return i;
+				acc += len;
+			}
+			return lines.length - 1;
+		}
+
+		/**
+		 * 源码形态行集合：选区（anchor→focus 区间）覆盖的行。null = 无焦点 →
+		 * 全部行阅读形态（输入框只是被看着，纯预览）。表格行/代码围栏行的恒源码
+		 * 判定不在这里（与焦点无关，渲染行循环处判）。
+		 */
+		function computeEditLines(lines, caretA, caretF, focused) {
+			if (!focused || (caretA == null && caretF == null)) return null;
+			const a = caretA == null ? caretF : caretA;
+			const b = caretF == null ? caretA : caretF;
+			const lo = lineIndexOfOffset(lines, Math.min(a, b));
+			const hi = lineIndexOfOffset(lines, Math.max(a, b));
+			const set = new Set();
+			for (let i = lo; i <= hi; i++) set.add(i);
+			return set;
+		}
+
+		/**
+		 * 阅读形态的字符段样式变换：标记隐身 / 符号化（paint-only）。
+		 * - mk / qmark / hmark → 隐身（阅读视图不显示 ** ` > ##）
+		 * - 无序 lmark → 圆点图形；有序（含 dsh-cl-lnum）保留数字
+		 * - task → 复选框图形（done 勾选）
+		 * - tmark（表格）不经此函数——表格行恒源码
+		 */
+		function toReadingForm(cls) {
+			if (!cls || cls.indexOf("dsh-cl-") !== 0) return cls;
+			if (cls === "dsh-cl-mk" || cls === "dsh-cl-qmark" || cls === "dsh-cl-hmark") return cls + " dsh-cl-rd";
+			if (cls === "dsh-cl-lmark") return cls + " dsh-cl-rd dsh-cl-rd-bullet";
+			if (cls.indexOf("dsh-cl-task") === 0) return cls + " dsh-cl-rd dsh-cl-rd-check" + (cls.indexOf("dsh-cl-task-done") >= 0 ? " dsh-cl-rd-on" : "");
+			return cls;
 		}
 
 		// ---------- 字符锚定渲染（v0.2 根治架构） ----------
@@ -486,7 +536,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 字符锚定渲染主入口：清空 overlay，按测量坐标输出「整块背景 + 定位字符段」。 */
-		function renderCharOverlay(ov, input, anchors, lines, states, refs, cache, layoutGen) {
+		function renderCharOverlay(ov, input, anchors, lines, states, refs, cache, layoutGen, editSet) {
 			const ovRect = ov.getBoundingClientRect();
 			const ox = ovRect.left, oy = ovRect.top;
 			const segLineHeight = getComputedStyle(ov).lineHeight; // 段定位的 half-leading 修正用
@@ -558,6 +608,12 @@ window.__ModuleLoader__.load({
 				for (const tk of tokens) {
 					const tl = tk.text.length;
 					for (let k = 0; k < tl && ci < chars.length; k++, ci++) charCls[ci] = tk.cls;
+				}
+				// 焦点行（v0.3.0）：非编辑行 → 阅读形态（标记隐身/符号化）。表格行与
+				// 代码围栏行恒源码（竖线/围栏是编辑结构，不随光标离开而阅读化）。
+				const alwaysSrc = (st.kind && st.kind.type === "table") || st.fenceOpen || st.fenceClose;
+				if (!alwaysSrc && !(editSet && editSet.has(li))) {
+					for (let k = 0; k < charCls.length; k++) charCls[k] = toReadingForm(charCls[k]);
 				}
 				// 官方文本引用装饰（/ 命令、技能名）→ 引用色。编辑器文字透明，官方给
 				// 装饰 span 的 color 看不见；按投影区间在渲染层补上同一主题色。
@@ -916,12 +972,18 @@ window.__ModuleLoader__.load({
 		function styleText() {
 			return (
 				"#" + STYLE_ID + "{}" +
+				// 主题锚点（v0.3.0 跟随）：所有颜色优先官方/皮肤变量（--dsw-alias-* /
+				// --shiki-token-*，与消息区渲染同源），缺失时回退内置两态（0.1.x 环境无
+				// 这套变量 = 维持既有观感）。定义在 body 级：工具栏/浮动条/toast 在滚动
+				// 容器外、渲染段在容器内，全部沿 DOM 继承拿到。dsh-cl-light 由 render()
+				// 按输入框底色切换；官方变量自身随主题/皮肤变 → 换肤零改码自动跟随。
+				"body{--dsh-cl-acc:var(--dsw-alias-link,#3b82f6);--dsh-cl-acc-soft:var(--dsw-alias-markdown-inline-code,rgba(59,130,246,.13));--dsh-cl-mkc:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));--dsh-cl-ok:var(--dsw-alias-state-success-primary,#16a34a);--dsh-cl-code-bg:var(--dsw-alias-markdown-code-block,rgba(13,17,23,.92));--dsh-cl-lang-bg:var(--dsw-alias-markdown-code-block-banner,rgba(127,127,127,.3));--dsh-cl-lang-fg:var(--dsw-alias-label-dimmed,rgba(249,250,251,.9));--dsh-cl-tok-kw:var(--shiki-token-keyword,#ff7b72);--dsh-cl-tok-str:var(--shiki-token-string,#a5d6ff);--dsh-cl-tok-com:var(--shiki-token-comment,#8b949e);--dsh-cl-tok-num:var(--shiki-token-constant,#79c0ff);--dsh-cl-tok-fn:var(--shiki-token-function,#d2a8ff);--dsh-cl-tok-lit:var(--shiki-token-constant,#79c0ff);--dsh-cl-tb-bg:var(--dsw-alias-bg-layer-3,rgba(28,30,36,.95));--dsh-cl-tb-fg:var(--dsw-alias-label-secondary,rgba(233,236,240,.9));--dsh-cl-tb-bd:rgba(255,255,255,.12);--dsh-cl-btn-hover:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18));--dsh-cl-btn-active:rgba(59,130,246,.16);--dsh-cl-sel:rgba(103,160,254,.35);--dsh-cl-toast-bg:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-3,rgba(28,30,36,.93)));--dsh-cl-toast-fg:var(--dsw-alias-label-primary,rgba(240,242,246,.95));}" +
+				"body.dsh-cl-light{--dsh-cl-acc:var(--dsw-alias-link,#3b82f6);--dsh-cl-acc-soft:var(--dsw-alias-markdown-inline-code,rgba(59,130,246,.13));--dsh-cl-mkc:var(--dsw-alias-label-dimmed,rgba(127,127,127,.5));--dsh-cl-ok:var(--dsw-alias-state-success-primary,#16a34a);--dsh-cl-code-bg:var(--dsw-alias-markdown-code-block,#f6f8fa);--dsh-cl-lang-bg:var(--dsw-alias-markdown-code-block-banner,rgba(127,127,127,.3));--dsh-cl-lang-fg:var(--dsw-alias-label-dimmed,rgba(31,35,40,.85));--dsh-cl-tok-kw:var(--shiki-token-keyword,#cf222e);--dsh-cl-tok-str:var(--shiki-token-string,#0a3069);--dsh-cl-tok-com:var(--shiki-token-comment,#6e7781);--dsh-cl-tok-num:var(--shiki-token-constant,#0550ae);--dsh-cl-tok-fn:var(--shiki-token-function,#8250df);--dsh-cl-tok-lit:var(--shiki-token-constant,#0550ae);--dsh-cl-tb-bg:var(--dsw-alias-bg-layer-1,rgba(250,251,253,.97));--dsh-cl-tb-fg:var(--dsw-alias-label-secondary,rgba(28,32,40,.85));--dsh-cl-tb-bd:rgba(61,55,48,.125);--dsh-cl-btn-hover:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18));--dsh-cl-btn-active:rgba(59,130,246,.16);--dsh-cl-sel:rgba(59,130,246,.28);--dsh-cl-toast-bg:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-1,rgba(250,251,253,.96)));--dsh-cl-toast-fg:var(--dsw-alias-label-primary,rgba(28,32,40,.92));}" +
 				// 常驻工具栏（v0.2.14：输入卡外、卡正上方的独立条）：不再占输入框内部
 				// 高度——编辑器 padding 让位（v0.2.8 的 BAR_RESERVE）随 sticky 体系整体
 				// 退役；宽度由搬正逻辑从 card 同步（父容器内容宽 ≠ card 宽，width:100%
 				// 会比卡突出）。背景不透明（沿用 v0.2.8 教训：透底会与后方内容混色）。
-				"." + TOOLBAR + "{display:flex;align-items:center;box-sizing:border-box;height:" + TB_HEIGHT + ";padding:0 12px;gap:2px;margin:0 0 6px;border-radius:12px;background:rgba(28,30,36,.95);box-shadow:rgba(0,0,0,.25) 0px 1px 8px 0px;}" +
-				"body.dsh-cl-light ." + TOOLBAR + "{background:rgba(250,251,253,.97);box-shadow:rgba(61,55,48,.125) 0px 0px 0px 0.5px,rgba(0,0,0,.04) 0px 1px 8px 0px;}" +
+				"." + TOOLBAR + "{display:flex;align-items:center;box-sizing:border-box;height:" + TB_HEIGHT + ";padding:0 12px;gap:2px;margin:0 0 6px;border-radius:12px;background:var(--dsh-cl-tb-bg,rgba(28,30,36,.95));border:1px solid var(--dsh-cl-tb-bd,rgba(255,255,255,.12));box-shadow:rgba(0,0,0,.25) 0px 1px 8px 0px;}" +
 				"." + TOOLBAR + " [data-cl=\"expand\"]{margin-left:auto;}" +
 				// 透明化：只隐藏文字「绘制」（-webkit-text-fill-color），color 属性保留
 				// ——caret 颜色、官方 hint ::after、chip 恢复全靠 color 不动。
@@ -929,15 +991,14 @@ window.__ModuleLoader__.load({
 				// 内容的一部分，随层自然盖在 overlay 上（caret 可见），而文字透明不遮挡
 				// overlay 的渲染文字。不能用「overlay 压 z-index:-1」的思路：负 z 会掉到
 				// 输入框背景之下，渲染文字整体不可见。
-				INPUT_SEL + "." + HOST + "{-webkit-text-fill-color:transparent;caret-color:#67a0fe;position:relative;z-index:1;}" +
+				INPUT_SEL + "." + HOST + "{-webkit-text-fill-color:transparent;caret-color:var(--dsh-cl-acc,#67a0fe);position:relative;z-index:1;}" +
 				// 选中态：Chromium 会用 ::selection 的默认反色把透明文字重绘出来（白字），
 				// 与 overlay 渲染文字形成双影——选中文字保持隐形（color:transparent），
 				// 但必须同时显式给 background：::selection 规则一旦匹配，未声明的属性
 				// 取初始值（transparent），会把浏览器默认高亮一并洗掉（选中无色）。
-				SCROLL_SEL + "{--dsh-cl-sel-bg:rgba(103,160,254,.35);}" +
-				SCROLL_SEL + ".dsh-cl-light{--dsh-cl-sel-bg:rgba(59,130,246,.28);}" +
-				INPUT_SEL + "." + HOST + "::selection{color:transparent;background:var(--dsh-cl-sel-bg);}" +
-				INPUT_SEL + "." + HOST + " ::selection{color:transparent;background:var(--dsh-cl-sel-bg);}" +
+				// v0.3.0：选区色跟随主题（--dsh-cl-sel 定义在 body 级锚点）。
+				INPUT_SEL + "." + HOST + "::selection{color:transparent;background:var(--dsh-cl-sel,rgba(103,160,254,.35));}" +
+				INPUT_SEL + "." + HOST + " ::selection{color:transparent;background:var(--dsh-cl-sel,rgba(103,160,254,.35));}" +
 				// chip（@ 引用胶囊宿主）与热词装饰恢复显示；hint 的 ::after 恢复
 				INPUT_SEL + "." + HOST + " " + CHIP_HOST_SEL + "{-webkit-text-fill-color:currentColor;}" +
 				INPUT_SEL + "." + HOST + " p::after{-webkit-text-fill-color:currentColor;}" +
@@ -945,14 +1006,14 @@ window.__ModuleLoader__.load({
 				INPUT_SEL + "." + HOST + " p." + KEEP + "{-webkit-text-fill-color:currentColor;}" +
 				// 代码段（编辑器）等宽：整框切换，与 overlay 渲染段同字体变量
 				INPUT_SEL + "." + MONO_ALL + "{font-family:var(--dsh-cl-code-font,var(--ds-font-family-code,monospace)) !important;}" +
-				// 按钮
+				// 按钮（v0.3.0：hover/焦点环/激活色跟随主题锚点）
 				".dsh-cl-btn{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:7px;border:1px solid transparent;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:0;transition:background .15s ease,transform .1s ease;}" +
-				".dsh-cl-btn:hover{background:rgba(127,127,127,.18);}" +
+				".dsh-cl-btn:hover{background:var(--dsh-cl-btn-hover,rgba(127,127,127,.18));}" +
 				".dsh-cl-btn:active{transform:scale(.92);background:rgba(127,127,127,.28);}" +
-				".dsh-cl-btn:focus-visible{outline:2px solid #3b82f6;outline-offset:1px;}" +
+				".dsh-cl-btn:focus-visible{outline:2px solid var(--dsh-cl-acc,#3b82f6);outline-offset:1px;}" +
 				".dsh-cl-btn svg{width:15px;height:15px;opacity:.85;}" +
 				".dsh-cl-btn:hover svg{opacity:1;}" +
-				".dsh-cl-btn.dsh-cl-active{background:rgba(59,130,246,.16);color:#3b82f6;}" +
+				".dsh-cl-btn.dsh-cl-active{background:var(--dsh-cl-btn-active,rgba(59,130,246,.16));color:var(--dsh-cl-acc,#3b82f6);}" +
 				// 展开态：滚动容器定高 70vh（只有 max-height 时高度仍由内容决定——
 				// 内容少的瞬间点展开纹丝不动，用户感知「按钮失效」）
 				"." + EXPANDED + "{max-height:70vh !important;height:70vh !important;}" +
@@ -967,29 +1028,29 @@ window.__ModuleLoader__.load({
 				"." + LIVE + " strong{font-weight:inherit;-webkit-text-stroke:.45px currentColor;}" +
 				"." + LIVE + " em{font-style:italic;}" +
 				"." + LIVE + " del{text-decoration:line-through;opacity:.75;}" +
-				"." + LIVE + " a{color:#3b82f6;text-decoration:none;}" +
-				"." + LIVE + " code{font-family:inherit;color:#3b82f6;background:rgba(59,130,246,.13);border-radius:5px;padding:1px 5px;margin:0 -5px;}" +
+				"." + LIVE + " a{color:var(--dsh-cl-acc,#3b82f6);text-decoration:none;}" +
+				"." + LIVE + " code{font-family:inherit;color:var(--dsh-cl-acc,#3b82f6);background:var(--dsh-cl-acc-soft,rgba(59,130,246,.13));border-radius:5px;padding:1px 5px;margin:0 -5px;}" +
 				// 行内格式的标记字符（**、`、~~、[]()）：淡化但保留占位（字符级对齐）
-				".dsh-cl-mk{color:rgba(127,127,127,.5);}" +
+				".dsh-cl-mk{color:var(--dsh-cl-mkc,rgba(127,127,127,.5));}" +
 
-				".dsh-cl-hmark{color:#3b82f6;font-weight:inherit;-webkit-text-stroke:.45px currentColor;}" +
+				".dsh-cl-hmark{color:var(--dsh-cl-acc,#3b82f6);font-weight:inherit;-webkit-text-stroke:.45px currentColor;}" +
 				".dsh-cl-heading{font-weight:inherit;-webkit-text-stroke:.45px currentColor;}" +
-				".dsh-cl-qmark{color:#3b82f6;}" +
+				".dsh-cl-qmark{color:var(--dsh-cl-acc,#3b82f6);}" +
 				".dsh-cl-quote{position:relative;z-index:0;}" +
-				".dsh-cl-quote::before{content:\"\";position:absolute;inset:0 -12px;background:rgba(127,127,127,.10);border-left:3px solid #3b82f6;z-index:-1;}" +
-				".dsh-cl-lmark{color:#3b82f6;}" +
-				".dsh-cl-tmark{color:#8b949e;}" +
-				".dsh-cl-img{background:rgba(59,130,246,.13);color:#3b82f6;border-radius:5px;padding:1px 5px;margin:0 -5px;}" +
-				// 代码段 overlay 行：等宽 + 伪元素外扩背景（GitHub Dark/Light 两套变量）
-				SCROLL_SEL + "{--dsh-cl-tok-kw:#ff7b72;--dsh-cl-tok-str:#a5d6ff;--dsh-cl-tok-com:#8b949e;--dsh-cl-tok-num:#79c0ff;--dsh-cl-tok-fn:#d2a8ff;--dsh-cl-tok-lit:#79c0ff;--dsh-cl-code-bg:rgba(13,17,23,.92);--dsh-cl-lang-fg:rgba(249,250,251,.9);}" +
-				SCROLL_SEL + ".dsh-cl-light{--dsh-cl-tok-kw:#cf222e;--dsh-cl-tok-str:#0a3069;--dsh-cl-tok-com:#6e7781;--dsh-cl-tok-num:#0550ae;--dsh-cl-tok-fn:#8250df;--dsh-cl-tok-lit:#0550ae;--dsh-cl-code-bg:rgba(246,248,250,.96);--dsh-cl-lang-fg:rgba(31,35,40,.85);}" +
+				".dsh-cl-quote::before{content:\"\";position:absolute;inset:0 -12px;background:rgba(127,127,127,.10);border-left:3px solid var(--dsh-cl-acc,#3b82f6);z-index:-1;}" +
+				".dsh-cl-lmark{color:var(--dsh-cl-acc,#3b82f6);}" +
+				".dsh-cl-tmark{color:var(--dsh-cl-mkc,#8b949e);}" +
+				".dsh-cl-img{background:var(--dsh-cl-acc-soft,rgba(59,130,246,.13));color:var(--dsh-cl-acc,#3b82f6);border-radius:5px;padding:1px 5px;margin:0 -5px;}" +
+				// 代码段 overlay 行：等宽 + 伪元素外扩背景。v0.3.0 起 token/底色/语言
+				// 标签变量定义上移 body 级主题锚点（官方 shiki/alias 变量优先——与消息
+				// 区代码块同源，自动跟随主题与皮肤；缺失回退内置 GitHub 两态）。
 				".dsh-cl-cline{position:relative;z-index:0;}" +
 				".dsh-cl-cline{font-family:var(--dsh-cl-code-font,var(--ds-font-family-code,monospace));}" +
 				".dsh-cl-cline::before{content:\"\";position:absolute;inset:0 -12px;background:var(--dsh-cl-code-bg);border-radius:0;z-index:-1;}" +
 				".dsh-cl-cline.dsh-cl-fence-open::before{border-radius:10px 10px 0 0;inset:2px -14px 0;}" +
 				".dsh-cl-cline.dsh-cl-fence-close::before{border-radius:0 0 10px 10px;inset:0 -14px 2px;}" +
 				".dsh-cl-fch{visibility:hidden;}" +
-				".dsh-cl-lang{position:absolute;right:26px;font-size:10px;line-height:1;padding:3px 7px;border-radius:5px;background:rgba(127,127,127,.3);border:1px solid rgba(255,255,255,.12);letter-spacing:.07em;text-transform:uppercase;color:var(--dsh-cl-lang-fg);pointer-events:none;}" +
+				".dsh-cl-lang{position:absolute;right:26px;font-size:10px;line-height:1;padding:3px 7px;border-radius:5px;background:var(--dsh-cl-lang-bg,rgba(127,127,127,.3));border:1px solid rgba(255,255,255,.12);letter-spacing:.07em;text-transform:uppercase;color:var(--dsh-cl-lang-fg);pointer-events:none;}" +
 				// ===== 字符锚定渲染（v0.2）：定位字符段 + 背景块 =====
 				// 字符段：绝对定位画在编辑器字符 rect 上；字体继承 overlay（syncMetrics
 				// 复制官方度量）；样式类只改 paint（伪粗/染色/胶囊背景外扩），零 advance 变化。
@@ -1006,18 +1067,27 @@ window.__ModuleLoader__.load({
 				// cd/img 胶囊背景外扩：横向 padding+负 margin 互相抵消（advance 零变化）；
 				// 垂直同理必须 margin:-1px 抵消 padding-top:1px——段是绝对定位块，
 				// 只补横向会让段内文字整体下移 1px（E2E INV-3 实测 dy 恒 +1.00）。
-				".dsh-cl-c.dsh-cl-cd{color:#3b82f6;background:rgba(59,130,246,.13);border-radius:5px;padding:1px 5px;margin:-1px -5px;}" +
+				".dsh-cl-c.dsh-cl-cd{color:var(--dsh-cl-acc,#3b82f6);background:var(--dsh-cl-acc-soft,rgba(59,130,246,.13));border-radius:5px;padding:1px 5px;margin:-1px -5px;}" +
 				".dsh-cl-c.dsh-cl-dl{text-decoration:line-through;opacity:.75;}" +
-				".dsh-cl-c.dsh-cl-lk{color:#3b82f6;}" +
-				".dsh-cl-c.dsh-cl-mk{color:rgba(127,127,127,.5);}" +
-				".dsh-cl-c.dsh-cl-hmark{color:#3b82f6;}" +
-				".dsh-cl-c.dsh-cl-qmark{color:#3b82f6;}" +
-				".dsh-cl-c.dsh-cl-lmark{color:#3b82f6;}" +
+				".dsh-cl-c.dsh-cl-lk{color:var(--dsh-cl-acc,#3b82f6);}" +
+				".dsh-cl-c.dsh-cl-mk{color:var(--dsh-cl-mkc,rgba(127,127,127,.5));}" +
+				".dsh-cl-c.dsh-cl-hmark{color:var(--dsh-cl-acc,#3b82f6);}" +
+				".dsh-cl-c.dsh-cl-qmark{color:var(--dsh-cl-acc,#3b82f6);}" +
+				".dsh-cl-c.dsh-cl-lmark{color:var(--dsh-cl-acc,#3b82f6);}" +
 				// 任务列表勾选标记（[ ]/[x] 三字符胶囊；done 绿底+行内容划线由 dsh-cl-dl）
-				".dsh-cl-c.dsh-cl-task{color:rgba(127,127,127,.55);background:rgba(59,130,246,.12);border-radius:4px;padding:1px 3px;margin:-1px -3px;}" +
-				".dsh-cl-c.dsh-cl-task-done{color:#16a34a;background:rgba(34,197,94,.18);}" +
-				".dsh-cl-c.dsh-cl-tmark{color:#8b949e;}" +
-				".dsh-cl-c.dsh-cl-img{color:#3b82f6;background:rgba(59,130,246,.13);border-radius:5px;padding:1px 5px;margin:-1px -5px;}" +
+				".dsh-cl-c.dsh-cl-task{color:var(--dsh-cl-mkc,rgba(127,127,127,.55));background:var(--dsh-cl-acc-soft,rgba(59,130,246,.12));border-radius:4px;padding:1px 3px;margin:-1px -3px;}" +
+				".dsh-cl-c.dsh-cl-task-done{color:var(--dsh-cl-ok,#16a34a);background:rgba(34,197,94,.18);}" +
+				".dsh-cl-c.dsh-cl-tmark{color:var(--dsh-cl-mkc,#8b949e);}" +
+				".dsh-cl-c.dsh-cl-img{color:var(--dsh-cl-acc,#3b82f6);background:var(--dsh-cl-acc-soft,rgba(59,130,246,.13));border-radius:5px;padding:1px 5px;margin:-1px -5px;}" +
+				// ===== 焦点行（v0.3.0）阅读形态：标记隐身 + 符号化（全部 paint-only） =====
+				// 隐身 = color:transparent（占位保留、光标对齐零风险）；圆点/复选框画在
+				// 字符段的伪元素上（段是 absolute 定位，伪元素相对段居中——宽度即原
+				// 标记字符宽度，无任何布局影响）。表格行/围栏行不经此形态（恒源码）。
+				".dsh-cl-c.dsh-cl-rd{color:transparent;}" +
+				".dsh-cl-c.dsh-cl-rd-bullet::after{content:\"\";position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:.36em;height:.36em;border-radius:50%;background:var(--dsh-cl-mkc,#999);}" +
+				".dsh-cl-c.dsh-cl-rd-check::before{content:\"\";position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:.85em;height:.85em;border-radius:.24em;box-sizing:border-box;border:1.5px solid var(--dsh-cl-mkc,#999);}" +
+				".dsh-cl-c.dsh-cl-rd-on::before{background:var(--dsh-cl-ok,#16a34a);border-color:var(--dsh-cl-ok,#16a34a);}" +
+				".dsh-cl-c.dsh-cl-rd-on::after{content:\"\";position:absolute;left:50%;top:50%;transform:translate(-46%,-60%) rotate(40deg);width:.24em;height:.46em;border:solid #fff;border-width:0 .14em .14em 0;}" +
 				".dsh-cl-c.dsh-cl-tok-kw{color:var(--dsh-cl-tok-kw);}" +
 				".dsh-cl-c.dsh-cl-tok-str{color:var(--dsh-cl-tok-str);}" +
 				".dsh-cl-c.dsh-cl-tok-com{color:var(--dsh-cl-tok-com);}" +
@@ -1035,14 +1105,13 @@ window.__ModuleLoader__.load({
 				".dsh-cl-tok-num{color:var(--dsh-cl-tok-num);}" +
 				".dsh-cl-tok-fn{color:var(--dsh-cl-tok-fn);}" +
 				".dsh-cl-tok-lit{color:var(--dsh-cl-tok-lit);}" +
-				// 选区浮动格式条：body 级 fixed（避免被输入卡 overflow 裁剪）
-				"." + FLOAT + "{position:fixed;z-index:80;display:none;align-items:center;gap:2px;padding:3px;border-radius:9px;background:rgba(28,30,36,.95);border:1px solid rgba(255,255,255,.12);box-shadow:0 4px 14px rgba(0,0,0,.28);}" +
+				// 选区浮动格式条：body 级 fixed（避免被输入卡 overflow 裁剪）。v0.3.0
+				// 底色/边框跟随主题锚点（与工具栏同源）。
+				"." + FLOAT + "{position:fixed;z-index:80;display:none;align-items:center;gap:2px;padding:3px;border-radius:9px;background:var(--dsh-cl-tb-bg,rgba(28,30,36,.95));border:1px solid var(--dsh-cl-tb-bd,rgba(255,255,255,.12));box-shadow:0 4px 14px rgba(0,0,0,.28);}" +
 				"." + FLOAT + ".dsh-cl-float-on{display:flex;}" +
-				"body.dsh-cl-light ." + FLOAT + "{background:rgba(250,251,253,.97);border-color:rgba(0,0,0,.08);}" +
-				// 轻提示
-				"." + TOAST + "{position:absolute;top:-40px;left:50%;transform:translateX(-50%);z-index:70;background:rgba(28,30,36,.93);color:rgba(240,242,246,.95);font-size:12px;line-height:1;padding:8px 14px;border-radius:8px;pointer-events:none;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.09);opacity:0;transition:opacity .18s ease;}" +
+				// 轻提示（v0.3.0：底/字色跟随——皮肤下 toast 是品牌色底，如 onepage 青瓷）
+				"." + TOAST + "{position:absolute;top:-40px;left:50%;transform:translateX(-50%);z-index:70;background:var(--dsh-cl-toast-bg,rgba(28,30,36,.93));color:var(--dsh-cl-toast-fg,rgba(240,242,246,.95));font-size:12px;line-height:1;padding:8px 14px;border-radius:8px;pointer-events:none;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.09);opacity:0;transition:opacity .18s ease;}" +
 				"." + TOAST + ".dsh-cl-toast-on{opacity:1;}" +
-				SCROLL_SEL + ".dsh-cl-light ." + TOAST + "{background:rgba(250,251,253,.96);color:rgba(28,32,40,.92);border-color:rgba(0,0,0,.08);}" +
 				""
 			);
 		}
@@ -1305,7 +1374,13 @@ window.__ModuleLoader__.load({
 			const src = anchorsText(anchors);
 			const lines = src.split("\n");
 			const caret = domOffsetOf(input, anchors, true);
+			const caretF = domOffsetOf(input, anchors, false);
 			const cursorLine = caret == null ? -1 : src.slice(0, caret).split("\n").length - 1;
+
+			// 焦点行（v0.3.0）：选区覆盖行=源码形态，其余行=阅读形态；无焦点全阅读。
+			// states 上移到签名前（computeEditLines 需要；O(行数) 遍历，短路路径无感）。
+			const states = computeBlockStates(lines);
+			const editSet = computeEditLines(lines, caret, caretF, document.activeElement === input);
 
 			// 合成字体栈（拉丁=代码等宽，中文=界面栈）写入 card 变量
 			const sentinel = card.__dshClSentinel;
@@ -1335,7 +1410,10 @@ window.__ModuleLoader__.load({
 			// 文档空闲实测 16 次/秒全量 × ~60ms = 98% 主线程占用、打字 6fps）。
 			const irx = input.getBoundingClientRect();
 			const orx = ov.getBoundingClientRect();
-			const renderSig = [src, cursorLine, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0].join("\u0000");
+			// editSig：选区行集合的指纹（焦点行切换/拖选跨行/焦点进出都要重渲染——
+			// cursorLine 只覆盖「光标所在行变化」，选区另一端变化与焦点态变化由它捕捉）
+			const editSig = editSet ? "e" + Array.from(editSet).join(",") : "r";
+			const renderSig = [src, cursorLine, editSig, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0].join("\u0000");
 			if (card.__dshClRenderSig === renderSig) {
 				updateToolbarMarks(card, src, caret);
 				card.__dshClCaret = caret;
@@ -1353,7 +1431,6 @@ window.__ModuleLoader__.load({
 			//   大段粘贴是单文本锚跨全部行，class 只能打锚 parent（波及整锚），且打点
 			//   循环的行号推进对字面 \n 会全部落 0（v0.2.3 只修了测量侧）。整框两侧
 			//   恒同字体，测量 rect 自动跟随。
-			const states = computeBlockStates(lines);
 			const ps = input.querySelectorAll(":scope > p");
 			const hasChip = lines.some(paraHasChip);
 			for (const p of ps) {
@@ -1385,7 +1462,7 @@ window.__ModuleLoader__.load({
 				fallbackToOfficial();
 			} else {
 				try {
-					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || [], card.__dshClLineCache, layoutGen);
+					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || [], card.__dshClLineCache, layoutGen, editSet);
 					if (hasContent && ov.querySelectorAll(".dsh-cl-c").length === 0) fallbackToOfficial();
 				} catch (err) {
 					fallbackToOfficial();
@@ -2101,6 +2178,9 @@ window.__ModuleLoader__.load({
 		exports._decidePasteWrap = decidePasteWrap;
 		exports._decideQuotePaste = decideQuotePaste;
 		exports._codeParaFlags = codeParaFlags;
+		exports._lineIndexOfOffset = lineIndexOfOffset;
+		exports._computeEditLines = computeEditLines;
+		exports._toReadingForm = toReadingForm;
 		exports._paraHasChip = paraHasChip;
 		return module.exports;
 	}

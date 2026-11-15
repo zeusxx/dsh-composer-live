@@ -58,7 +58,7 @@ t('quote', render('> 引用'), '<div class="dsh-cl-quote"><span class="dsh-cl-qm
 t('quote no space', render('>引用'), '<div class="dsh-cl-quote"><span class="dsh-cl-qmark">&gt;</span>引用</div>');
 t('list dash', render('- 项目'), '<div><span class="dsh-cl-lmark">-</span> 项目</div>');
 t('list star', render('* 项目'), '<div><span class="dsh-cl-lmark">*</span> 项目</div>');
-t('list ordered', render('1. 第一'), '<div><span class="dsh-cl-lmark">1.</span> 第一</div>');
+t('list ordered', render('1. 第一'), '<div><span class="dsh-cl-lmark dsh-cl-lnum">1.</span> 第一</div>');
 t('table sep', render('|---|---|'), '<div><span class="dsh-cl-tmark">|---|---|</span></div>');
 t('not heading no space', render('#标题'), '<div>#标题</div>');
 t('not list no space', render('-项目'), '<div>-项目</div>');
@@ -337,6 +337,40 @@ t('wrap list at line head', wrap('abc\ndef', 4, 4, 'list'), { insert: '- ', curs
 t('wrap list already marked → null', wrap('abc\n- def', 5, 5, 'list'), null);
 t('wrap block mid lines', wrap('前文\nx=1\n后文', 3, 6, 'block'), { insert: '```\nx=1\n```', cursorStart: 7, cursorEnd: 10 });
 t('wrap block tail no extra nl', wrap('abcx=1', 0, 6, 'block'), { insert: '```\nabcx=1\n```', cursorStart: 4, cursorEnd: 10 });
+
+// ===== 焦点行（v0.3.0）：编辑行集合 / 阅读形态变换 =====
+// 语义：选区（anchor→focus 区间）覆盖行 = 源码形态；无焦点返回 null = 全阅读。
+// 行号按 \n 切分；offset 恰在行尾 \n 上归属本行（off < acc+len 判定）。
+const editLines = (...a) => { const s = mod._computeEditLines(...a); return s ? Array.from(s) : null; };
+t('edit unfocused → null', editLines(['ab'], 0, 0, false), null);
+t('edit no caret → null', editLines(['ab'], null, null, true), null);
+t('edit collapsed line0', editLines(['ab', 'cd'], 1, 1, true), [0]);
+t('edit collapsed line1', editLines(['ab', 'cd'], 4, 4, true), [1]);
+t('edit anchor-only line1', editLines(['ab', 'cd'], 3, null, true), [1]);
+t('edit focus-only line0', editLines(['ab', 'cd'], null, 2, true), [0]);
+t('edit span lines 0-2', editLines(['ab', 'cd', 'ef'], 1, 6, true), [0, 1, 2]);
+t('edit reverse span', editLines(['ab', 'cd', 'ef'], 6, 1, true), [0, 1, 2]);
+t('edit offset on newline belongs to line', editLines(['ab', 'cd'], 2, 2, true), [0]);
+t('edit beyond tail → last line', editLines(['ab', 'cd'], 99, 99, true), [1]);
+// lineIndexOfOffset：行首/行中/行尾/超尾
+t('lineIdx head', mod._lineIndexOfOffset(['ab', 'cd'], 0), 0);
+t('lineIdx mid', mod._lineIndexOfOffset(['ab', 'cd'], 1), 0);
+t('lineIdx on nl', mod._lineIndexOfOffset(['ab', 'cd'], 2), 0);
+t('lineIdx next head', mod._lineIndexOfOffset(['ab', 'cd'], 3), 1);
+t('lineIdx beyond', mod._lineIndexOfOffset(['ab', 'cd'], 99), 1);
+// toReadingForm：标记隐身 / 符号化（paint-only——返回值只是 class 追加）
+const rd = mod._toReadingForm;
+t('rd mk hidden', rd('dsh-cl-mk'), 'dsh-cl-mk dsh-cl-rd');
+t('rd qmark hidden', rd('dsh-cl-qmark'), 'dsh-cl-qmark dsh-cl-rd');
+t('rd hmark hidden', rd('dsh-cl-hmark'), 'dsh-cl-hmark dsh-cl-rd');
+t('rd unordered bullet', rd('dsh-cl-lmark'), 'dsh-cl-lmark dsh-cl-rd dsh-cl-rd-bullet');
+t('rd ordered keeps number', rd('dsh-cl-lmark dsh-cl-lnum'), 'dsh-cl-lmark dsh-cl-lnum');
+t('rd task checkbox', rd('dsh-cl-task'), 'dsh-cl-task dsh-cl-rd dsh-cl-rd-check');
+t('rd task done checked', rd('dsh-cl-task dsh-cl-task-done'), 'dsh-cl-task dsh-cl-task-done dsh-cl-rd dsh-cl-rd-check dsh-cl-rd-on');
+t('rd tmark unchanged', rd('dsh-cl-tmark'), 'dsh-cl-tmark');
+t('rd content unchanged', rd('dsh-cl-cd'), 'dsh-cl-cd');
+t('rd plain unchanged', rd(''), '');
+t('rd foreign unchanged', rd('dsh-cl-ref'), 'dsh-cl-ref');
 
 console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

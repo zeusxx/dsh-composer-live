@@ -2,25 +2,33 @@
 
 <h1 align="center">dsh-composer-live</h1>
 
-<p align="center"><b>打 Markdown，边打边渲染</b>——给 DeepSeek Harness（DSH）Web 输入框带来 Open WebUI 风格的实时编辑体验。</p>
+<p align="center"><b>打 Markdown，边打边渲染</b>——焦点行源码/阅读分离 + 颜色全面跟随主题。</p>
 
 <p align="center">[English](./README.md) · [简体中文](./README.zh-CN.md)</p>
 
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-220%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
 </p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
 
 dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编辑器：你打 Markdown，它边打边渲染——加粗、斜体、带语法高亮的代码块、列表、引用、表格——而草稿本身始终是纯 Markdown 源文本，发送出去的就是你输入的原文。
 
-它是一个**纯浏览器端插件**：零运行时依赖、不注入任何官方服务、不改官方源码。它在官方 0.1.5 Lexical 输入框之上叠加增强，不重复 DSH 已原生提供的功能。
+**v0.3.0** 起还带来 Obsidian「实时预览」式的体验：**光标所在行显示源码标记**（可编辑），**其余行自动呈现阅读形态**——标记隐身、`-` 列表变圆点、`- [ ]` / `- [x]` 任务变真复选框；同时所有颜色**跟随你的主题/皮肤**（官方 CSS 变量驱动）——行内代码打字时和发送后颜色完全一致。
+
+它是一个**纯浏览器端插件**：零运行时依赖、不注入任何官方服务、不改官方源码。它在官方 0.1.5+ Lexical 输入框之上叠加增强，不重复 DSH 已原生提供的功能。
 
 > 找 DSH **0.1.x**（textarea 架构输入框）的版本？那是 [`dsh-composer-md`](#faq)——本插件的前身，已停止维护。
 
 ## 截图
+
+### 焦点行：源码/阅读分离（v0.3.0）
+
+光标行显示源码标记（带闪烁光标）；其余行是阅读形态——`##`/`>`/`**` 隐身、圆点列表、复选框任务、有序数字保留。
+
+![焦点行：光标行源码、其余行阅读形态](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/focus-line.png)
 
 ### Markdown 实时渲染
 
@@ -36,9 +44,19 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 
 ## 功能
 
+### 焦点行：源码/阅读视图分离（v0.3.0）
+
+Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（可编辑），**其余行呈现阅读形态**——行内标记（`**`、`` ` ``、`~~`、`[]()`）与 `##`、`>` 前缀隐身；无序列表 `-` 符号化为圆点；任务 `[ ]` / `[x]` 变成真复选框（勾选态绿底白勾）；有序列表保留数字；表格行与代码围栏行恒为源码（属编辑结构）。输入框无焦点时全部行阅读形态——一片干净的预览。
+
+隐身是纯画法（绝对定位渲染段 `color:transparent`，图形画在段伪元素上）——字符占位天然保留，光标对齐零影响。
+
+### 颜色全面跟随主题（v0.3.0）
+
+不再写死配色：强调色跟随 `--dsw-alias-link`、行内代码底跟随 `--dsw-alias-markdown-inline-code`（**打字与发送后颜色终于一致**）、代码块底跟随 `--dsw-alias-markdown-code-block`、语法高亮 token 跟随官方 `--shiki-token-*` 主题、标记字符跟随 `--dsw-alias-label-dimmed`、任务完成跟随 success token、工具栏/toast 跟随表面层 token。换皮肤/换主题自动跟随；无这套变量的宿主（DSH 0.1.x）自动回退内置亮暗配色。
+
 ### Markdown 实时渲染
 
-- 行内样式边打边生效：`**加粗**`、`*斜体*`、`` `行内代码` ``（品牌蓝胶囊）、`~~删除线~~`、`[链接](url)`（白名单协议）、`![图片](url)` 胶囊。
+- 行内样式边打边生效：`**加粗**`、`*斜体*`、`` `行内代码` ``（主题强调色胶囊）、`~~删除线~~`、`[链接](url)`（白名单协议）、`![图片](url)` 胶囊。
 - **光标字符级精确对齐**。标记字符（`**`、`` ` ``、`~~`、`[]()`）淡化显示但保留精确宽度，粗体/标题用 paint-only 伪粗——渲染行与编辑器透明文字逐字符完全对齐，光标落在行内任何位置（包括格式区间内部）都精确贴齐，打字零漂移。
 - 任务列表项：`- [ ]` / `- [x]` 渲染成勾选胶囊；已完成项内容划线。
 - 草稿始终是纯 Markdown 源文本。渲染纯视觉——发送的消息就是你输入的源文本。
@@ -49,7 +67,7 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 - **未闭合围栏行上按 Shift+Enter** 自动补全封闭块（块内空行 + 闭合围栏 + 块后空行），光标落回块内，直接开写。
 - 已闭合块最后一个内容行按 ↓ 直接跳出，落到块后的普通行。
 - 零依赖正则语法高亮：js/ts/py/sh/json/yml/css/html，未标语言按内容自动推断——中文长文不会误判成代码。
-- 围栏行右上角语言标签；GitHub-dark / GitHub-light 两套块主题；围栏字符淡化。
+- 围栏行右上角语言标签；token 色跟随官方 shiki 主题（回退 GitHub 两套）；围栏字符淡化。
 - 等宽：草稿含已闭合代码块期间，整个输入框（编辑器 + 渲染层）同步切换等宽字体栈（与官方代码字体同源）。中文字符刻意保持界面字体，两侧换行点永不发散。
 
 ### 列表、引用、表格
