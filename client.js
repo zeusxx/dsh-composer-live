@@ -966,6 +966,25 @@ window.__ModuleLoader__.load({
 			const lum = 0.299 * (+m[1]) + 0.587 * (+m[2]) + 0.114 * (+m[3]);
 			return lum < 128;
 		}
+
+		// v0.3.1 代码块派生用：沿祖先链找第一个「不透明」背景色（卡自身多不透明；
+		// 半透明卡（毛玻璃类皮肤）会跳到更外层的不透明底——极端皮肤下派生基准可能
+		// 与合成后的卡面色有出入，属可接受近似；主流皮肤卡为不透明，精确命中）。
+		function effectiveCardBg(el) {
+			let n = el;
+			while (n && n.nodeType === 1 && n !== document.documentElement) {
+				const c = getComputedStyle(n).backgroundColor;
+				const m = String(c).match(/^rgba?\(([^)]+)\)$/);
+				if (m) {
+					const parts = m[1].split(",").map((s) => parseFloat(s));
+					if (!(parts.length > 3 && parts[3] === 0)) return c;
+				} else if (c && c !== "transparent") {
+					return c;
+				}
+				n = n.parentElement;
+			}
+			return "rgb(255, 255, 255)";
+		}
 		//#endregion
 
 		//#region dsh-composer-live: injected styles
@@ -979,6 +998,17 @@ window.__ModuleLoader__.load({
 				// 按输入框底色切换；官方变量自身随主题/皮肤变 → 换肤零改码自动跟随。
 				"body{--dsh-cl-acc:var(--dsw-alias-link,#3b82f6);--dsh-cl-acc-soft:var(--dsw-alias-markdown-inline-code,rgba(59,130,246,.13));--dsh-cl-mkc:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));--dsh-cl-ok:var(--dsw-alias-state-success-primary,#16a34a);--dsh-cl-code-bg:var(--dsw-alias-markdown-code-block,rgba(13,17,23,.92));--dsh-cl-lang-bg:var(--dsw-alias-markdown-code-block-banner,rgba(127,127,127,.3));--dsh-cl-lang-fg:var(--dsw-alias-label-dimmed,rgba(249,250,251,.9));--dsh-cl-tok-kw:var(--shiki-token-keyword,#ff7b72);--dsh-cl-tok-str:var(--shiki-token-string,#a5d6ff);--dsh-cl-tok-com:var(--shiki-token-comment,#8b949e);--dsh-cl-tok-num:var(--shiki-token-constant,#79c0ff);--dsh-cl-tok-fn:var(--shiki-token-function,#d2a8ff);--dsh-cl-tok-lit:var(--shiki-token-constant,#79c0ff);--dsh-cl-tb-bg:var(--dsw-alias-bg-layer-3,rgba(28,30,36,.95));--dsh-cl-tb-fg:var(--dsw-alias-label-secondary,rgba(233,236,240,.9));--dsh-cl-tb-bd:rgba(255,255,255,.12);--dsh-cl-btn-hover:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18));--dsh-cl-btn-active:rgba(59,130,246,.16);--dsh-cl-sel:rgba(103,160,254,.35);--dsh-cl-toast-bg:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-3,rgba(28,30,36,.93)));--dsh-cl-toast-fg:var(--dsw-alias-label-primary,rgba(240,242,246,.95));}" +
 				"body.dsh-cl-light{--dsh-cl-acc:var(--dsw-alias-link,#3b82f6);--dsh-cl-acc-soft:var(--dsw-alias-markdown-inline-code,rgba(59,130,246,.13));--dsh-cl-mkc:var(--dsw-alias-label-dimmed,rgba(127,127,127,.5));--dsh-cl-ok:var(--dsw-alias-state-success-primary,#16a34a);--dsh-cl-code-bg:var(--dsw-alias-markdown-code-block,#f6f8fa);--dsh-cl-lang-bg:var(--dsw-alias-markdown-code-block-banner,rgba(127,127,127,.3));--dsh-cl-lang-fg:var(--dsw-alias-label-dimmed,rgba(31,35,40,.85));--dsh-cl-tok-kw:var(--shiki-token-keyword,#cf222e);--dsh-cl-tok-str:var(--shiki-token-string,#0a3069);--dsh-cl-tok-com:var(--shiki-token-comment,#6e7781);--dsh-cl-tok-num:var(--shiki-token-constant,#0550ae);--dsh-cl-tok-fn:var(--shiki-token-function,#8250df);--dsh-cl-tok-lit:var(--shiki-token-constant,#0550ae);--dsh-cl-tb-bg:var(--dsw-alias-bg-layer-1,rgba(250,251,253,.97));--dsh-cl-tb-fg:var(--dsw-alias-label-secondary,rgba(28,32,40,.85));--dsh-cl-tb-bd:rgba(61,55,48,.125);--dsh-cl-btn-hover:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18));--dsh-cl-btn-active:rgba(59,130,246,.16);--dsh-cl-sel:rgba(59,130,246,.28);--dsh-cl-toast-bg:var(--dsw-alias-toast-bg,var(--dsw-alias-bg-layer-1,rgba(250,251,253,.96)));--dsh-cl-toast-fg:var(--dsw-alias-label-primary,rgba(28,32,40,.92));}" +
+				// v0.3.1 派生层（用户拍板方案 A）：代码块/语言标签/胶囊底不再取消息区
+				// 变量——onepage 类皮肤把 --dsw-alias-markdown-code-block 定义成「页面
+				// 底色+透明」，在输入卡上叠加后与卡同色（深色实测 #211e1d 完全归零）。
+				// 改从「输入卡实际底色」派生（render() 写 --dsh-cl-card-bg），跟随的
+				// 正确语义=跟随所在容器；换肤/换主题自动保证层次。@supports 守卫：
+				// 不支持 color-mix 的老内核回落基础层的 v0.3.0 观感。三个暖色源
+				// (#b9a06e/#8c6923/#a07837) 为逐值还原预览页拍板色的最小组合。
+				"@supports (background:color-mix(in srgb,red,blue)){" +
+					"body{--dsh-cl-code-bg:color-mix(in srgb,var(--dsh-cl-card-bg,#211e1d) 73%,#000);--dsh-cl-lang-bg:color-mix(in srgb,var(--dsh-cl-card-bg,#211e1d) 60%,#000);--dsh-cl-lang-fg:#8f877c;--dsh-cl-acc-soft:color-mix(in srgb,var(--dsh-cl-card-bg,#211e1d) 82%,#8a7f70);}" +
+					"body.dsh-cl-light{--dsh-cl-code-bg:color-mix(in srgb,var(--dsh-cl-card-bg,#ffffff) 80%,#b9a06e);--dsh-cl-lang-bg:color-mix(in srgb,var(--dsh-cl-card-bg,#ffffff) 80%,#8c6923);--dsh-cl-lang-fg:#8a8175;--dsh-cl-acc-soft:color-mix(in srgb,var(--dsh-cl-card-bg,#ffffff) 80%,#a07837);}" +
+				"}" +
 				// 常驻工具栏（v0.2.14：输入卡外、卡正上方的独立条）：不再占输入框内部
 				// 高度——编辑器 padding 让位（v0.2.8 的 BAR_RESERVE）随 sticky 体系整体
 				// 退役；宽度由搬正逻辑从 card 同步（父容器内容宽 ≠ card 宽，width:100%
@@ -1399,6 +1429,15 @@ window.__ModuleLoader__.load({
 			if (scrollEl0) {
 				scrollEl0.classList.toggle("dsh-cl-light", isLightColor(color0));
 				document.body.classList.toggle("dsh-cl-light", isLightColor(color0));
+			}
+
+			// v0.3.1 卡底实测 → --dsh-cl-card-bg（代码块/语言标签/胶囊底 color-mix
+			// 派生的基准）。卡底只随主题/换肤变，签名守卫避免每键重写 body style；
+			// 写在 body 级：工具栏在卡外（v0.2.14），沿 DOM 继承全可达。
+			const cardBg = effectiveCardBg(card);
+			if (document.body.__dshClCardBg !== cardBg) {
+				document.body.__dshClCardBg = cardBg;
+				document.body.style.setProperty("--dsh-cl-card-bg", cardBg);
 			}
 
 			// ===== 渲染签名短路（v0.2.17 性能优化的核心） =====
@@ -2121,6 +2160,8 @@ window.__ModuleLoader__.load({
 					document.removeEventListener("selectionchange", onSelChange);
 					document.removeEventListener("pointerdown", onDocDown, true);
 					document.body.classList.remove("dsh-cl-light");
+				document.body.style.removeProperty("--dsh-cl-card-bg");
+				delete document.body.__dshClCardBg;
 					const card = findCard();
 					if (card) {
 						if (card.__dshClDisposables) {
@@ -2167,6 +2208,7 @@ window.__ModuleLoader__.load({
 		exports._renderBlockLine = renderBlockLine;
 		exports._stateKey = stateKey;
 		exports._isLightColor = isLightColor;
+		exports._effectiveCardBg = effectiveCardBg;
 		exports._decideActiveMarks = decideActiveMarks;
 		exports._decideKeyAction = decideKeyAction;
 		exports._decideTabBlock = decideTabBlock;
