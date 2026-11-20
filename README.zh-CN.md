@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20136%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20141%20E2E-2ea44f" alt="tests">
 </p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -120,7 +120,7 @@ Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（�
 
 ## 实测版本
 
-每个版本发布前都在两个真实实例上跑完整 136 场景 E2E（覆盖两代支持的架构）：
+每个版本发布前都在两个真实实例上跑完整 141 场景 E2E（覆盖两代支持的架构）：
 
 | DSH 版本 | 状态 |
 | --- | --- |
@@ -169,6 +169,8 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 
 渲染层从不自己排版，所以对齐类问题（漂移、抖动、错位）在架构上不存在：实测各场景偏差 ≤ 0.02px，连续打字逐帧偏差 0.00。
 
+**行级差量渲染（v0.4.0）**——渲染层拆成「背景层 + 每行容器」，段坐标相对行首。打字只重画变化的 1-2 行（200 行文档连打 60 键实测只重写 **1 个**行容器、0 次长任务——优化前 33 次、最大 170ms）；光标跨行只重写新旧两行；上游折行变化对下游只是每行一次 `style.top` 写入（零重测零重解析）——打字稳态成本与文档长度解耦，长文档与短文档一样轻。
+
 插件不注入任何官方服务。它直接读编辑器 DOM 推导「投影文本」（胶囊 → U+FFFC，`<br>`/段落边界 → 换行），对官方 client API 变化免疫；DOM 锚定用稳定的 `data-` 属性而非哈希过的 CSS Modules 类名。改动草稿的操作（列表续项、围栏补全、缩进……）走 Lexical 原生通道——保撤销栈的合成 `beforeinput` 事件——绝不直接改 DOM。
 
 完整深读见 [docs/architecture.md](./docs/architecture.md)。
@@ -186,8 +188,9 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 ## 开发
 
 ```bash
-node test-live.cjs    # 220 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs  # 136 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node test-live.cjs      # 246 项单测（纯函数，无需浏览器）
+node e2e/run-e2e.mjs    # 141 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node e2e/run-perf.mjs   # 性能门槛：空闲零渲染、打字帧中位 <20ms、长任务 ≤8（宽松防退化阈值）
 ```
 
 E2E runner 要求被测实例已部署当前源码，路径全部由环境变量推导：`DSH_CL_PORT`（默认 8124）与 `DSH_CL_DSH_HOME`（默认取 `DSH_HOME`，再默认 `~/.dsh`）定位部署副本做版本对照，鉴权 cookie 自动获取。完整变量表见 [e2e/README.md](./e2e/README.md)。

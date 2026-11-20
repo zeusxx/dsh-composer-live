@@ -1161,4 +1161,62 @@ export const SCENARIOS = [
 			{ type: "expectClass", selector: ".dsh-cl-tmark" },
 		],
 	},
+
+	// ===== Y 行级差量渲染（v0.4.0 新增）=====
+	// 背景：渲染层从「每键全量 innerHTML 重建」改为「行容器定位 + 行级差量替换 +
+	// 测量缓存 x/y 拆分验证与 dy 重定基」。五场景各钉一个新机制的靶：
+	//   Y1 = 打字致折行数变化 → 下游整段 y 平移（dy 重定基 + 容器定位专项）
+	//   Y2 = 行数增减交替 → 行容器槽位收缩与 DOM 序对齐
+	//   Y3 = 重复行文档改一行 → 按行号索引缓存（旧文本 Map 会互相顶替全量重测）
+	//   Y4 = 已闭合代码块内打字 → 背景层签名 + 等宽整框（anyCode 位）
+	//   Y5 = 大文档光标全扫 → editSet 翻转只重写新旧两行
+	{
+		name: "Y1-shift-typing", group: "Y", focus: "行中连打致折行变化（dy 重定基+容器定位）",
+		channel: "bi-text", text: () => plainLines(120, "\n"),
+		ops: [
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpType", text: "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Y2-row-shrink-stress", group: "Y", focus: "Enter/Backspace 交替（行容器收缩+DOM 序）",
+		channel: "bi-lines", text: () => plainLines(12, "\n"),
+		ops: (function () {
+			const ops = [{ type: "caretRatio", ratio: 0.5 }];
+			for (let i = 0; i < 10; i++) ops.push({ type: "cdpKey", key: "Enter" }, { type: "cdpKey", key: "Backspace" });
+			ops.push({ type: "cdpKey", key: "Enter" }, { type: "cdpType", text: "新行内容" }, { type: "expectRows" });
+			return ops;
+		})(),
+	},
+	{
+		name: "Y3-duplicate-lines", group: "Y", focus: "重复行文档改一行（按行号索引缓存）",
+		channel: "bi-lines", text: () => Array.from({ length: 30 }, () => "完全相同的重复行内容，验证按行号索引。").join("\n"),
+		ops: [
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpType", text: "差异字符" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Y4-bigdoc-codeblock", group: "Y", focus: "闭合代码块内打字（背景签名+等宽位）",
+		channel: "bi-lines",
+		text: () => {
+			const pre = Array.from({ length: 40 }, (_, i) => "普通行 " + i + "：前置内容").join("\n");
+			const code = ["```js", "function hello() {", "  const greeting = 'world';", "  return greeting;", "}", "```"].join("\n");
+			const post = Array.from({ length: 40 }, (_, i) => "普通行 " + i + "：后置内容").join("\n");
+			return pre + "\n" + code + "\n" + post;
+		},
+		ops: [
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpType", text: " // 块内续写注释内容", chars: true },
+			{ type: "expectClass", selector: ".dsh-cl-bg" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Y5-focus-walk-bigdoc", group: "Y", focus: "50 行文档光标全扫（editSet 翻转差量）",
+		channel: "bi-text", text: () => plainLines(50, "\n"),
+		ops: [{ type: "caretSweep", n: 50 }, { type: "expectRows" }],
+	},
 ];

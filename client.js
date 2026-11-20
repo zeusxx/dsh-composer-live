@@ -72,6 +72,8 @@ window.__ModuleLoader__.load({
 		const CHIP_HOST_SEL = "[data-composer-chip]";
 		/** 文本引用装饰（热词高亮）：内容参与投影（非原子 chip），但透明化下需要恢复显示。 */
 		const TEXT_REF_SEL = "[data-composer-text-ref]";
+		/** keydown 关心的键（v0.4.0 早退白名单）：decideKeyAction 只对这三键返回动作。 */
+		const KEY_ACTS = ["Enter", "Tab", "ArrowDown"];
 		/** chip 在「投影文本」里的字符（与官方 detectText 同构）。 */
 		const CHIP_CHAR = "￼";
 		/** 行内代码/图片占位控制字符（不与正文数字混淆）。 */
@@ -460,9 +462,9 @@ window.__ModuleLoader__.load({
 		 * 3000 次测量降到 ~300 次）。同文本多行（空行/重复行）共享 key 互相顶替 →
 		 * 各自全测，无害。
 		 */
-		function measureAnchorChars(anchors, lineCount, cache, layoutGen) {
+		function measureAnchorChars(anchors, lineCount, cache, layoutGen, firstDiff) {
 			const useCache = !!(cache && layoutGen);
-			if (useCache && cache.gen !== layoutGen) { cache.gen = layoutGen; cache.lines.clear(); }
+			if (useCache && cache.gen !== layoutGen) { cache.gen = layoutGen; cache.entries.length = 0; cache.prevLines = []; }
 			const range = document.createRange();
 			// 第一遍（零测量）：把锚流切成分段的「行」（seg = 文本节点内的字符区间），
 			// 同时拼出行文本（缓存 key）。行边界 = br/para 锚 + 文本节点内字面 \n。
@@ -493,22 +495,43 @@ window.__ModuleLoader__.load({
 				}
 				off += len;
 			}
-			// 第二遍：逐行缓存判定 → 命中直接用；miss 全行测量并回填。
+			// 第二遍（v0.4.0 按行号条目 + x/y 拆分验证 + dy 重定基 + firstDiff 短路）：
+			// - firstDiff 之上的行：文本未变且其上布局未变 → 直接用缓存（零测量）
+			// - 文本同的行：只验证行首 x（左对齐下 x 恒定）；x 过而 y 偏 = 整行平移
+			//   （上游折行数变化），缓存数组就地 +dy 重定基（精确，无逐字符重测）
+			// - x 也偏 = 重折行/字体变 → 全行重测回填
+			// 旧「全文本 Map + x/y 双验证」对 y 平移必失败（打字改折行时下游全量重测，
+			// 正是 longTask 主力），且同文本多行互相顶替（重复行每帧全测）——按行号
+			// 索引一并消除。条目长度 = 行数，自然收缩，无需旧的上限防泄漏。
+			const entries = useCache ? cache.entries : null;
 			const lineChars = [];
 			for (let li = 0; li < lineCount; li++) {
 				const row = li < rows.length ? rows[li] : null;
 				const text = li < texts.length ? texts[li] : null;
+				const e = entries ? entries[li] : null;
 				let chars = null;
-				if (useCache && row && row.length) {
-					const m = cache.lines.get(text);
-					if (m && m.length) {
-						const s0 = row[0];
-						try {
-							range.setStart(s0.node, s0.from);
-							range.setEnd(s0.node, s0.from + 1);
-							const pr = range.getBoundingClientRect();
-							if (pr && Math.abs(pr.top - m[0].y) < 0.5 && Math.abs(pr.left - m[0].x) < 0.5) chars = m;
-						} catch (err) { /* 验证失败 → 全行重测 */ }
+				if (e && e.text === text) {
+					if (!e.chars.length || li < firstDiff) {
+						chars = e.chars; // 空行无可测；firstDiff 之上布局必未变，零验证
+					} else {
+						const s0 = row && row[0];
+						if (s0) {
+							try {
+								range.setStart(s0.node, s0.from);
+								range.setEnd(s0.node, s0.from + 1);
+								const pr = range.getBoundingClientRect();
+								if (pr && Math.abs(pr.left - e.chars[0].x) < 0.5) {
+									const dy = pr.top - e.chars[0].y;
+									if (Math.abs(dy) < 0.5) {
+										chars = e.chars;
+									} else if (Math.abs(dy) < 64) {
+										for (const c of e.chars) c.y += dy; // 整行平移：y 重定基
+										chars = e.chars;
+									}
+									// dy 超界（异常跳变，如切会话残留）→ 视为 miss 全行重测
+								}
+							} catch (err) { /* 验证失败 → 全行重测 */ }
+						}
 					}
 				}
 				if (!chars) {
@@ -527,34 +550,60 @@ window.__ModuleLoader__.load({
 							} catch (err) { /* 跳过该段 */ }
 						}
 					}
-					if (useCache && chars.length) cache.lines.set(text, chars);
+					if (entries) entries[li] = { text, chars };
 				}
 				lineChars.push(chars);
 			}
-			if (useCache && cache.lines.size > 800) cache.lines.clear(); // 上限防泄漏（长会话删行残留）
+			if (entries && entries.length > lineCount) entries.length = lineCount;
+			if (cache) cache.prevLines = texts.slice(0, lineCount);
 			return lineChars;
 		}
 
-		/** 字符锚定渲染主入口：清空 overlay，按测量坐标输出「整块背景 + 定位字符段」。 */
+		/** 字符锚定渲染主入口（v0.4.0 行级差量）：overlay = 背景层 + 每行容器。
+		 * 行容器承担定位（left/top = 行首字符的 ov 相对坐标），段坐标改为相对行首
+		 * ——行 HTML 与绝对位置解耦：上游折行变化引起的 y 平移退化为每行一次
+		 * style.top 写（零重建零重测）；行文本与形态未变则行 HTML 直接复用（正则
+		 * 链、tokenizeViaDom、innerHTML 解析全跳过）。打字稳态只重写光标行 1-2 行，
+		 * 光标跨行只重写新旧两行，成本与文档长度解耦（firstDiff 之上整体短路）。 */
 		function renderCharOverlay(ov, input, anchors, lines, states, refs, cache, layoutGen, editSet) {
 			const ovRect = ov.getBoundingClientRect();
 			const ox = ovRect.left, oy = ovRect.top;
 			const segLineHeight = getComputedStyle(ov).lineHeight; // 段定位的 half-leading 修正用
-			const lineChars = measureAnchorChars(anchors, lines.length, cache, layoutGen);
+			// firstDiff：首个文本变化行——之上的行布局未变（测量零验证、位置零写入）
+			let firstDiff = lines.length;
+			for (let i = 0; i < lines.length; i++) {
+				if (cache.prevLines[i] !== lines[i]) { firstDiff = i; break; }
+			}
+			const lineChars = measureAnchorChars(anchors, lines.length, cache, layoutGen, firstDiff);
 			// 容器内容区（块背景的水平范围——统一宽度消灭按行宽的锯齿）
 			const inpRect = input.getBoundingClientRect();
 			const ics = getComputedStyle(input);
 			const pl = parseFloat(ics.paddingLeft) || 0, pr = parseFloat(ics.paddingRight) || 0;
 			const contentLeft = inpRect.left + pl - 12;
 			const contentW = inpRect.width - pl - pr + 24;
-			let out = "";
 			// 每行在投影文本中的起始 offset（refs 区间按绝对 offset 匹配字符）
 			const lineStarts = [];
 			let lineAcc = 0;
 			for (const l of lines) { lineStarts.push(lineAcc); lineAcc += l.length + 1; }
+			// ===== 骨架守卫：ov 被清空过（fallbackToOfficial / !editable 分支 / 官方
+			// 重挂）时 bglayer 不在 → 重建骨架并整体失效行缓存（rowEls 已随 ov 清空
+			// 失联，entries 的 HTML/坐标签名一并作废）。
+			let bgWrap = ov.querySelector(":scope > .dsh-cl-bglayer");
+			if (!bgWrap) {
+				ov.textContent = "";
+				bgWrap = document.createElement("div");
+				bgWrap.className = "dsh-cl-bglayer";
+				ov.appendChild(bgWrap);
+				cache.entries.length = 0;
+				cache.prevLines = [];
+				cache.rowEls = [];
+				firstDiff = 0;
+			}
 			// ===== 块级背景（代码块整块一个矩形：垂直无缝；引用段同理） =====
 			// 逐行画背景会按行内容宽度锯齿 + 行间露缝——聚合到块级：从块首行首字符顶
 			// 到块末行末字符底 ±2.5px，水平取容器内容宽。块内空行天然被矩形覆盖。
+			// v0.4.0：bgOut 串拼进 bglayer，串本身即签名——变了才写 innerHTML。
+			let bgOut = "";
 			const blockBgDone = new Set();
 			const verticalPad = 2.5;
 			for (let li = 0; li < lines.length; li++) {
@@ -572,8 +621,8 @@ window.__ModuleLoader__.load({
 					continue;
 				}
 				const cls = "dsh-cl-bg" + (st.fenceOpen ? " dsh-cl-bg-open" : "") + (states[end].fenceClose ? " dsh-cl-bg-close" : "");
-				out += '<div class="' + cls + '" style="left:' + (contentLeft - ox) + "px;top:" + (top - oy - verticalPad) + "px;width:" + contentW + "px;height:" + (bottom - top + verticalPad * 2) + 'px"></div>';
-				if (st.fenceOpen && st.lang) out += '<span class="dsh-cl-lang" style="top:' + (top - oy + 2) + 'px">' + escapeHtml(st.lang) + "</span>";
+				bgOut += '<div class="' + cls + '" style="left:' + (contentLeft - ox) + "px;top:" + (top - oy - verticalPad) + "px;width:" + contentW + "px;height:" + (bottom - top + verticalPad * 2) + 'px"></div>';
+				if (st.fenceOpen && st.lang) bgOut += '<span class="dsh-cl-lang" style="top:' + (top - oy + 2) + 'px">' + escapeHtml(st.lang) + "</span>";
 				for (let k = li; k <= end; k++) blockBgDone.add(k);
 			}
 			// 引用段（连续 quote 行聚合一个背景）
@@ -587,84 +636,135 @@ window.__ModuleLoader__.load({
 				for (let k = li; k <= end; k++) {
 					for (const c of lineChars[k]) { if (c.y < top) top = c.y; if (c.y + c.h > bottom) bottom = c.y + c.h; }
 				}
-				if (top !== Infinity) out += '<div class="dsh-cl-qbg" style="left:' + (contentLeft - ox) + "px;top:" + (top - oy - verticalPad) + "px;width:" + contentW + "px;height:" + (bottom - top + verticalPad * 2) + 'px"></div>';
+				if (top !== Infinity) bgOut += '<div class="dsh-cl-qbg" style="left:' + (contentLeft - ox) + "px;top:" + (top - oy - verticalPad) + "px;width:" + contentW + "px;height:" + (bottom - top + verticalPad * 2) + 'px"></div>';
 				for (let k = li; k <= end; k++) quoteBgDone.add(k);
 			}
-			// ===== 字符段渲染 =====
+			if (bgWrap.__dshClSig !== bgOut) { bgWrap.innerHTML = bgOut; bgWrap.__dshClSig = bgOut; }
+			// ===== 行容器差量 =====
+			// 等宽整框位提出行循环（旧版在行内 states.some 是 O(N²)，200 行 4 万次/帧）。
+			const anyCode = states.some((st) => st.inCode);
+			const rows = cache.rowEls || (cache.rowEls = []);
 			for (let li = 0; li < lines.length; li++) {
 				const line = lines[li];
 				const st = states[li];
-				if (paraHasChip(line)) continue; // chip 行：官方原样（KEEP）
 				const chars = lineChars[li];
-				if (!chars.length) continue; // 空行：背景已由块级矩形覆盖
-				// 行字符的样式 token（HTML 复用既有正则链 → DOM 解析）
-				let html;
-				if (st.inCode) html = codeLineContent(line, st.fenceOpen ? "dsh-cl-fence-open" : (st.fenceClose ? "dsh-cl-fence-close" : ""), st.lang, st.fenceOpen, -2);
-				else html = inlineLineContent(line, null);
-				const tokens = tokenizeViaDom(html);
-				// token → 每字符样式类（token 文本流 = 源文字符流，mk 占位保证逐字符对应）
-				const charCls = new Array(chars.length).fill("");
-				let ci = 0;
-				for (const tk of tokens) {
-					const tl = tk.text.length;
-					for (let k = 0; k < tl && ci < chars.length; k++, ci++) charCls[ci] = tk.cls;
-				}
-				// 焦点行（v0.3.0）：非编辑行 → 阅读形态（标记隐身/符号化）。表格行与
-				// 代码围栏行恒源码（竖线/围栏是编辑结构，不随光标离开而阅读化）。
+				// 行形态签名（内容层，无坐标）：state + 有效源码位 + refs 裁剪 + 等宽位。
+				// 有效源码位必须含 alwaysSrc（表格/围栏行恒源码）——光标扫过它们不重建。
 				const alwaysSrc = (st.kind && st.kind.type === "table") || st.fenceOpen || st.fenceClose;
-				if (!alwaysSrc && !(editSet && editSet.has(li))) {
-					for (let k = 0; k < charCls.length; k++) charCls[k] = toReadingForm(charCls[k]);
-				}
-				// 官方文本引用装饰（/ 命令、技能名）→ 引用色。编辑器文字透明，官方给
-				// 装饰 span 的 color 看不见；按投影区间在渲染层补上同一主题色。
+				const srcBit = alwaysSrc || (editSet && editSet.has(li)) ? "s" : "r";
+				let refMask = "";
 				if (refs.length) {
-					const base = lineStarts[li] || 0;
-					for (let k = 0; k < chars.length; k++) {
-						const abs = base + chars[k].off;
-						for (const r of refs) {
-							if (abs >= r.start && abs < r.end) {
-								charCls[k] = (charCls[k] ? charCls[k] + " " : "") + "dsh-cl-ref";
-								break;
-							}
+					const ls = lineStarts[li] || 0, le = ls + line.length, parts = [];
+					for (const r of refs) if (r.end > ls && r.start < le) parts.push((Math.max(r.start, ls) - ls) + ":" + (Math.min(r.end, le) - ls));
+					refMask = parts.join(",");
+				}
+				const sig = stateKey(st) + "\u0001" + srcBit + "\u0001" + refMask + "\u0001" + (anyCode ? "M" : "");
+				const e = cache.entries[li];
+				if (!e || e.text !== line || e.sig !== sig) {
+					// 空行/chip 行 → 空容器（chip 行官方原样 KEEP；空行背景由块级矩形覆盖）
+					cache.entries[li] = { text: line, chars, sig, html: buildRowHtml(line, st, chars, srcBit === "s", refs, lineStarts[li] || 0, anyCode, segLineHeight) };
+				}
+				const entry = cache.entries[li];
+				// DOM 槽位（按行号对齐；增长尾部 append 保文档序）
+				let rowEl = rows[li];
+				if (!rowEl || !rowEl.isConnected || rowEl.parentElement !== ov) {
+					rowEl = document.createElement("div");
+					rowEl.className = "dsh-cl-row";
+					rowEl.dataset.li = String(li);
+					ov.appendChild(rowEl);
+					rows[li] = rowEl;
+				}
+				if (rowEl.__dshClHtml !== entry.html) { rowEl.innerHTML = entry.html; rowEl.__dshClHtml = entry.html; }
+				// 位置（行首字符 ov 相对坐标；firstDiff 之上布局未变跳过）
+				if (li >= firstDiff && chars.length) {
+					const c0 = chars[0];
+					const pos = (c0.x - ox) + "," + (c0.y - oy);
+					if (rowEl.__dshClPos !== pos) {
+						rowEl.style.left = (c0.x - ox) + "px";
+						rowEl.style.top = (c0.y - oy) + "px";
+						rowEl.__dshClPos = pos;
+					}
+				}
+			}
+			while (rows.length > lines.length) rows.pop().remove();
+			// DOM 序校正：确保 bglayer 之后按行序排列——querySelectorAll 返回文档序
+			// （INV-4 断言依赖），中途行重建 + 首尾行残留的稀疏场景会乱序，逐位拉回。
+			const kids = ov.children;
+			for (let i = 1; i <= rows.length; i++) {
+				if (kids[i] !== rows[i - 1]) ov.insertBefore(rows[i - 1], kids[i] || null);
+			}
+			cache.prevLines = lines.slice();
+		}
+
+		/** 单行 → 段 HTML（v0.4.0 从 renderCharOverlay 抽取）。段坐标相对行首字符 c0
+		 * （行容器承担绝对定位）——同行文本在同字体同宽下段相对布局恒定，行 HTML
+		 * 可跨「y 平移」复用。合段/半行距/refs 染色/阅读态逻辑与旧版逐字一致。 */
+		function buildRowHtml(line, st, chars, isSrc, refs, lineStart, anyCode, segLineHeight) {
+			if (!chars.length || paraHasChip(line)) return "";
+			// 行字符的样式 token（HTML 复用既有正则链 → DOM 解析）
+			let html;
+			if (st.inCode) html = codeLineContent(line, st.fenceOpen ? "dsh-cl-fence-open" : (st.fenceClose ? "dsh-cl-fence-close" : ""), st.lang, st.fenceOpen, -2);
+			else html = inlineLineContent(line, null);
+			const tokens = tokenizeViaDom(html);
+			// token → 每字符样式类（token 文本流 = 源文字符流，mk 占位保证逐字符对应）
+			const charCls = new Array(chars.length).fill("");
+			let ci = 0;
+			for (const tk of tokens) {
+				const tl = tk.text.length;
+				for (let k = 0; k < tl && ci < chars.length; k++, ci++) charCls[ci] = tk.cls;
+			}
+			// 焦点行（v0.3.0）：非编辑行 → 阅读形态（标记隐身/符号化）。isSrc 已含
+			// 「表格行与代码围栏行恒源码」（竖线/围栏是编辑结构，不随光标离开而阅读化）。
+			if (!isSrc) {
+				for (let k = 0; k < charCls.length; k++) charCls[k] = toReadingForm(charCls[k]);
+			}
+			// 官方文本引用装饰（/ 命令、技能名）→ 引用色。编辑器文字透明，官方给
+			// 装饰 span 的 color 看不见；按投影区间在渲染层补上同一主题色。
+			if (refs.length) {
+				for (let k = 0; k < chars.length; k++) {
+					const abs = lineStart + chars[k].off;
+					for (const r of refs) {
+						if (abs >= r.start && abs < r.end) {
+							charCls[k] = (charCls[k] ? charCls[k] + " " : "") + "dsh-cl-ref";
+							break;
 						}
 					}
 				}
-				// 合并「同样式 + 同视觉行 + 横向连续」的字符成段（段内浏览器排版同字体零差）。
-				// 等宽整框语义：文档含代码块时全部段用等宽合成栈（与编辑器 MONO_ALL 同源变量）。
-				const anyCode = states.some((st) => st.inCode);
-				const codeCls = anyCode ? " dsh-cl-codefont" : "";
-				// 段定位必须用「行盒顶」而非「字形盒顶」：段内字符随段自身行盒排版，
-				// 字形顶 = 段top + half-leading((行高-字形高)/2)。直接拿测量出的字形顶
-				// 定位会让渲染文字整体下移 half-leading（实测恒 +3px：行高27/字形21）。
-				// 段内其余字符的相对排布与编辑器同构（同字体同行高同基线规则），首字符
-				// 对齐即全段对齐；代码行等宽段用该段首字符的字形高计算。
-				const segLineH = parseFloat(segLineHeight) || 0;
-				let segStart = 0;
-				const flush = (endExclusive) => {
-					const s = chars[segStart];
-					let text = "";
-					// 段 text 剔除 \r：CRLF 粘贴的行尾 \r 在段内（white-space:pre）会被当
-					// 真换行——段盒凭空多撑一行（代码块背景多一块）。编辑器把 \r 当
-					// 换行语义的一部分（0 宽不可见），渲染侧同样零宽处理＝直接不画。
-					for (let k = segStart; k < endExclusive; k++) {
-						const ch = line.charAt(chars[k].off);
-						if (ch !== "\r") text += ch;
-					}
-					if (!text) { segStart = endExclusive; return; } // 整段全 \r：无可视字符，不输出空段
-					const cls = charCls[segStart] + codeCls;
-					const half = segLineH > s.h ? (segLineH - s.h) / 2 : 0;
-					out += '<span class="dsh-cl-c' + (cls ? " " + cls : "") + '" style="left:' + (s.x - ox) + "px;top:" + (s.y - oy - half) + 'px">' + escapeHtml(text) + "</span>";
-					segStart = endExclusive;
-				};
-				for (let i = 1; i <= chars.length; i++) {
-					const cont = i < chars.length
-						&& charCls[i] === charCls[segStart]
-						&& Math.abs(chars[i].y - chars[segStart].y) < 2
-						&& (chars[i].x - (chars[i - 1].x + chars[i - 1].w)) < 1.5;
-					if (!cont) flush(i);
-				}
 			}
-			ov.innerHTML = out;
+			// 合并「同样式 + 同视觉行 + 横向连续」的字符成段（段内浏览器排版同字体零差）。
+			// 等宽整框语义：文档含代码块时全部段用等宽合成栈（与编辑器 MONO_ALL 同源变量）。
+			const codeCls = anyCode ? " dsh-cl-codefont" : "";
+			// 段定位必须用「行盒顶」而非「字形盒顶」：段内字符随段自身行盒排版，
+			// 字形顶 = 段top + half-leading((行高-字形高)/2)。段内其余字符的相对排布
+			// 与编辑器同构（同字体同行高同基线规则），首字符对齐即全段对齐。
+			const segLineH = parseFloat(segLineHeight) || 0;
+			const c0 = chars[0];
+			let out = "";
+			let segStart = 0;
+			const flush = (endExclusive) => {
+				const s = chars[segStart];
+				let text = "";
+				// 段 text 剔除 \r：CRLF 粘贴的行尾 \r 在段内（white-space:pre）会被当
+				// 真换行——段盒凭空多撑一行。编辑器把 \r 当换行语义的一部分（0 宽
+				// 不可见），渲染侧同样零宽处理＝直接不画。
+				for (let k = segStart; k < endExclusive; k++) {
+					const ch = line.charAt(chars[k].off);
+					if (ch !== "\r") text += ch;
+				}
+				if (!text) { segStart = endExclusive; return; } // 整段全 \r：无可视字符，不输出空段
+				const cls = charCls[segStart] + codeCls;
+				const half = segLineH > s.h ? (segLineH - s.h) / 2 : 0;
+				out += '<span class="dsh-cl-c' + (cls ? " " + cls : "") + '" style="left:' + (s.x - c0.x) + "px;top:" + (s.y - c0.y - half) + 'px">' + escapeHtml(text) + "</span>";
+				segStart = endExclusive;
+			};
+			for (let i = 1; i <= chars.length; i++) {
+				const cont = i < chars.length
+					&& charCls[i] === charCls[segStart]
+					&& Math.abs(chars[i].y - chars[segStart].y) < 2
+					&& (chars[i].x - (chars[i - 1].x + chars[i - 1].w)) < 1.5;
+				if (!cont) flush(i);
+			}
+			return out;
 		}
 		//#endregion
 
@@ -1084,7 +1184,9 @@ window.__ModuleLoader__.load({
 				// ===== 字符锚定渲染（v0.2）：定位字符段 + 背景块 =====
 				// 字符段：绝对定位画在编辑器字符 rect 上；字体继承 overlay（syncMetrics
 				// 复制官方度量）；样式类只改 paint（伪粗/染色/胶囊背景外扩），零 advance 变化。
-				".dsh-cl-c{position:absolute;white-space:pre;pointer-events:none;color:inherit;font-family:inherit;}" +
+				".dsh-cl-row{position:absolute;margin:0;}" +
+			".dsh-cl-bglayer{margin:0;}" +
+			".dsh-cl-c{position:absolute;white-space:pre;pointer-events:none;color:inherit;font-family:inherit;}" +
 				// 官方文本引用装饰（/ 命令、技能名）：渲染层用同一主题引用色。
 				// 编辑器层文字已透明，官方给装饰 span 的 color 看不见（此前显示为
 				// 普通正文色）；hover 背景同样在编辑器层（z-index:1，画在 overlay
@@ -1361,7 +1463,18 @@ window.__ModuleLoader__.load({
 		const METRIC_KEYS = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing",
 			"tabSize", "whiteSpace", "wordBreak", "overflowWrap", "wordWrap",
 			"boxSizing", "textAlign", "textIndent"];
-		function syncMetrics(input, ov) {
+		/** 轻段主题度量（v0.4.0）：input 文字色（transparent 沿父链取一档）+ padding。
+	 * 每键必读（两者都进渲染签名），单次 getComputedStyle 两个属性。 */
+	function readThemeMetrics(input) {
+		const cs = getComputedStyle(input);
+		let color = cs.color;
+		if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") {
+			color = getComputedStyle(input.parentElement).color;
+		}
+		return { color, padding: cs.padding };
+	}
+
+	function syncMetrics(input, ov) {
 			const cs = getComputedStyle(input);
 			const fp = input.querySelector(":scope > p");
 			const fc = fp ? getComputedStyle(fp) : cs;
@@ -1397,7 +1510,7 @@ window.__ModuleLoader__.load({
 			if (!editable) {
 				ov.innerHTML = "";
 				card.__dshClRenderSig = "";
-				card.__dshClLineCache = null;
+				card.__dshClRowCache = null;
 				return;
 			}
 			const anchors = buildAnchors(input);
@@ -1412,9 +1525,29 @@ window.__ModuleLoader__.load({
 			const states = computeBlockStates(lines);
 			const editSet = computeEditLines(lines, caret, caretF, document.activeElement === input);
 
-			// 合成字体栈（拉丁=代码等宽，中文=界面栈）写入 card 变量
+			// 度量与主题（v0.2.17 上移到短路点之前：主题色是签名的组成部分）。
+			// v0.4.0 拆轻重段：轻段每键只读 color+padding（进签名），重段（度量全量
+			// 复制到 ov 的 syncMetrics）挪到签名 miss 之后——签名命中路径（空闲轮询/
+			// 同行光标移动/selectionchange 噪音）从 2-3 次 getComputedStyle×6 属性降
+			// 为 1 次×2 属性。padding 必须进签名：input 内距变化要能击穿签名让重段
+			// 跑（原实现靠每键跑 syncMetrics 的守卫捕捉，拆开后由签名承担）。
+			const scrollEl0 = card.querySelector(SCROLL_SEL);
+			const themeMetrics = readThemeMetrics(input);
+			const color0 = themeMetrics.color;
+			if (scrollEl0) {
+				scrollEl0.classList.toggle("dsh-cl-light", isLightColor(color0));
+				document.body.classList.toggle("dsh-cl-light", isLightColor(color0));
+			}
+
+			// v0.4.0 慢通道：字体栈合成 + 卡底实测只随「主题/字体设置/换肤」变（分钟
+			// 级频率），共用 slowKey（color0 变化即时失效 + 2s 时间桶兜底不改文字色的
+			// 换肤场景）——key 未变直接用上轮结果，把每键 3-6 次祖先链/哨兵
+			// getComputedStyle 从打字路径移除。--dsh-cl-card-bg 写在 body 级：工具栏
+			// 在卡外（v0.2.14），沿 DOM 继承全可达。
+			const slowKey = color0 + "|" + Math.floor(Date.now() / 2000);
 			const sentinel = card.__dshClSentinel;
-			if (sentinel && sentinel.isConnected) {
+			if (sentinel && sentinel.isConnected && card.__dshClFontKey !== slowKey) {
+				card.__dshClFontKey = slowKey;
 				const sc = getComputedStyle(sentinel);
 				const merged = buildCodeFont(sc.getPropertyValue("--ds-font-family-code"), sc.fontFamily);
 				if (card.__dshClFontSig !== merged) {
@@ -1422,22 +1555,13 @@ window.__ModuleLoader__.load({
 					card.style.setProperty("--dsh-cl-code-font", merged);
 				}
 			}
-
-			// 度量与主题（v0.2.17 上移到短路点之前：主题色是签名的组成部分）
-			const scrollEl0 = card.querySelector(SCROLL_SEL);
-			const color0 = syncMetrics(input, ov);
-			if (scrollEl0) {
-				scrollEl0.classList.toggle("dsh-cl-light", isLightColor(color0));
-				document.body.classList.toggle("dsh-cl-light", isLightColor(color0));
-			}
-
-			// v0.3.1 卡底实测 → --dsh-cl-card-bg（代码块/语言标签/胶囊底 color-mix
-			// 派生的基准）。卡底只随主题/换肤变，签名守卫避免每键重写 body style；
-			// 写在 body 级：工具栏在卡外（v0.2.14），沿 DOM 继承全可达。
-			const cardBg = effectiveCardBg(card);
-			if (document.body.__dshClCardBg !== cardBg) {
-				document.body.__dshClCardBg = cardBg;
-				document.body.style.setProperty("--dsh-cl-card-bg", cardBg);
+			if (card.__dshClBgKey !== slowKey) {
+				card.__dshClBgKey = slowKey;
+				const cardBg = effectiveCardBg(card);
+				if (document.body.__dshClCardBg !== cardBg) {
+					document.body.__dshClCardBg = cardBg;
+					document.body.style.setProperty("--dsh-cl-card-bg", cardBg);
+				}
 			}
 
 			// ===== 渲染签名短路（v0.2.17 性能优化的核心） =====
@@ -1452,16 +1576,20 @@ window.__ModuleLoader__.load({
 			// editSig：选区行集合的指纹（焦点行切换/拖选跨行/焦点进出都要重渲染——
 			// cursorLine 只覆盖「光标所在行变化」，选区另一端变化与焦点态变化由它捕捉）
 			const editSig = editSet ? "e" + Array.from(editSet).join(",") : "r";
-			const renderSig = [src, cursorLine, editSig, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0].join("\u0000");
+			const renderSig = [src, cursorLine, editSig, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0, themeMetrics.padding].join("\u0000");
 			if (card.__dshClRenderSig === renderSig) {
 				updateToolbarMarks(card, src, caret);
 				card.__dshClCaret = caret;
 				return;
 			}
 			card.__dshClRenderSig = renderSig;
-			if (!card.__dshClLineCache) card.__dshClLineCache = { gen: "", lines: new Map() };
-			// 行测量缓存的布局代：字体/容器几何/主题任一变化 → 行缓存整体作废
-			const layoutGen = [card.__dshClFontSig || "", Math.round(irx.width), Math.round(irx.left - orx.left), color0].join("|");
+			syncMetrics(input, ov); // v0.4.0 重段：度量全量复制到 ov（签名 miss 时才需要；内部自有守卫）
+			if (!card.__dshClRowCache) card.__dshClRowCache = { gen: "", prevLines: [], entries: [], rowEls: [] };
+			// 行缓存的布局代：字体/容器几何/主题/等宽整框任一变化 → 行缓存整体作废。
+			// hasCode（MONO_ALL 整框等宽）必须进代：等宽切换改全部行字体但 fontSig
+			// （哨兵合成栈）不感知——漏了会让 firstDiff 短路用旧测量画错坐标。
+			const hasCode = states.some((st) => st.inCode);
+			const layoutGen = [card.__dshClFontSig || "", Math.round(irx.width), Math.round(irx.left - orx.left), color0, hasCode ? "M" : ""].join("|");
 
 			// 编辑器 class（打点在测量前——等宽打点影响布局，先定型再测量）：
 			// - KEEP（chip 段恢复）段落级
@@ -1475,8 +1603,7 @@ window.__ModuleLoader__.load({
 			for (const p of ps) {
 				p.classList.toggle(KEEP, hasChip);
 			}
-			const hasCode = states.some((st) => st.inCode);
-			input.classList.toggle(MONO_ALL, hasCode);
+			input.classList.toggle(MONO_ALL, hasCode); // hasCode 已在 layoutGen 处算过
 
 			// 度量与主题段已于签名短路点之前执行（color 是签名组成部分）
 
@@ -1501,7 +1628,7 @@ window.__ModuleLoader__.load({
 				fallbackToOfficial();
 			} else {
 				try {
-					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || [], card.__dshClLineCache, layoutGen, editSet);
+					renderCharOverlay(ov, input, anchors, lines, states, anchors.refs || [], card.__dshClRowCache, layoutGen, editSet);
 					if (hasContent && ov.querySelectorAll(".dsh-cl-c").length === 0) fallbackToOfficial();
 				} catch (err) {
 					fallbackToOfficial();
@@ -1912,6 +2039,10 @@ window.__ModuleLoader__.load({
 					const phase = input2.getAttribute("data-phase");
 					if (phase && phase !== "plain") return;
 					if (menuOpen(card)) return; // 候选菜单开着 → 全归官方
+					// v0.4.0 白名单早退：decideKeyAction 只关心 Enter/Tab/ArrowDown（Ctrl/Cmd
+					// 组合的 B/I/E 分支在后面单独判），其余键——普通打字占绝对多数——不需要
+					// buildAnchors+anchorsText+domOffsetOf 的 O(文档) 前置，直接放行官方。
+					if (!e.ctrlKey && !e.metaKey && !e.altKey && KEY_ACTS.indexOf(e.key) === -1) return;
 					const anchors = buildAnchors(input2);
 					const src = anchorsText(anchors);
 					const caret = domOffsetOf(input2, anchors, true);
@@ -2088,7 +2219,9 @@ window.__ModuleLoader__.load({
 						anchorKinds: anchors.reduce((m, a) => { m[a.kind] = (m[a.kind] || 0) + 1; return m; }, {}),
 						segs,
 						host: input.classList.contains(HOST),
-						editable: input.getAttribute("contenteditable") === "true"
+						editable: input.getAttribute("contenteditable") === "true",
+						rows: card.__dshClRowCache ? card.__dshClRowCache.rowEls.length : 0, // 行容器数（应与 lineCount 一致）
+						rowEntries: card.__dshClRowCache ? card.__dshClRowCache.entries.length : 0
 					};
 				};
 

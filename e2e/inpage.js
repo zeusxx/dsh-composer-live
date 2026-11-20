@@ -329,6 +329,12 @@
 			}
 		} else if (o.type === "caret") {
 			setSelCollapsed(input, anchors, clamp(o.off));
+		} else if (o.type === "expectRows") {
+			// v0.4.0 行级差量：行容器数必须与投影行数一致（槽位收缩/DOM 序对齐的
+			// 直接断言——经 __dshClDebug 的 rows/lineCount 只读字段）。
+			var dbgR = window.__dshClDebug ? window.__dshClDebug() : null;
+			if (!dbgR || !dbgR.found) return { ok: false, got: "no debug hook" };
+			if (dbgR.rows !== dbgR.lineCount) return { ok: false, got: "rows=" + dbgR.rows + " lineCount=" + dbgR.lineCount };
 		} else if (o.type === "caretRatio") {
 			setSelCollapsed(input, anchors, clamp(Math.round(src.length * (o.ratio == null ? 1 : o.ratio))));
 		} else if (o.type === "caretSweep") {
