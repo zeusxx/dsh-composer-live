@@ -332,9 +332,34 @@ async function cdpOp(o) {
 	}
 	// 鼠标类：pointAt 由 inpage 提供投影 offset → 视口坐标
 	if (o.type === "mouseSelect") {
-		const a = await cdp.eval(`window.__e2e.pointAt(${o.from})`);
-		const b = await cdp.eval(`window.__e2e.pointAt(${o.to})`);
+		let a = await cdp.eval(`window.__e2e.pointAt(${o.from})`);
+		let b = await cdp.eval(`window.__e2e.pointAt(${o.to})`);
 		if (!a || !b) return { ok: false, got: "pointAt 定位失败" };
+		// 覆盖层自愈（F 组 2026-11-21 定位）：hero→active 切换的过渡期，官方欢迎层
+		// 仍盖在编辑器上方（坐标在输入框 rect 内但 elementFromPoint 命中覆盖层）——
+		// 拖选会选中它的文字（selInInput=false）。等按下点命回输入框再拖，最多 3 轮，
+		// 每轮重读坐标（布局随切换变化）。仍被盖则明确报错。
+		const elAtInput = () => cdp.eval(`(() => { const i = document.querySelector('[data-composer-input]'); const e = document.elementFromPoint(${a.x}, ${a.y}); return !!(i && e && (e === i || i.contains(e))); })()`);
+		let covered = !(await elAtInput());
+		for (let tries = 0; covered && tries < 3; tries++) {
+			await sleep(500);
+			a = await cdp.eval(`window.__e2e.pointAt(${o.from})`);
+			b = await cdp.eval(`window.__e2e.pointAt(${o.to})`);
+			if (!a || !b) return { ok: false, got: "pointAt 定位失败（覆盖层等待重读）" };
+			covered = !(await elAtInput());
+		}
+		if (covered) {
+			const cov = await cdp.eval(`(() => { const e = document.elementFromPoint(${a.x}, ${a.y}); if (!e) return "null"; const cs = getComputedStyle(e); const r = e.getBoundingClientRect(); return { tag: e.tagName, cls: String(e.className || "").slice(0, 80), html: e.outerHTML.slice(0, 160), pe: cs.pointerEvents, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, parentCls: e.parentElement ? String(e.parentElement.className || "").slice(0, 80) : "" }; })()`);
+			return { ok: false, got: `输入框被覆盖层遮挡: a=(${Math.round(a.x)},${Math.round(a.y)}) 详情=${JSON.stringify(cov)}` };
+		}
+		// 坐标防漂移校验：pointAt 拿坐标到鼠标事件发出之间页面可能重排（hero↔active
+		// 切换等）——坐标落到输入框外时明确报错，而不是把别处文字选中造成假阳/假阴
+		const ir = await cdp.eval(`(() => { const i = document.querySelector('[data-composer-input]'); if (!i) return null; const r = i.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+		if (!ir) return { ok: false, got: "输入框不在场（card 重建窗口期）" };
+		const inside = (p) => p.x >= ir.x - 2 && p.x <= ir.x + ir.w + 2 && p.y >= ir.y - 2 && p.y <= ir.y + ir.h + 2;
+		if (!inside(a) || !inside(b)) return { ok: false, got: `拖选坐标漂移到输入框外: a=(${Math.round(a.x)},${Math.round(a.y)}) b=(${Math.round(b.x)},${Math.round(b.y)}) input=[${Math.round(ir.x)},${Math.round(ir.y)} ${Math.round(ir.w)}x${Math.round(ir.h)}]` };
+		// 拖选现场遥测（失败断言携带）：坐标、输入框 rect、按下点顶层元素
+		await cdp.eval(`window.__e2eLastDrag = ${JSON.stringify({ a, b, ir })}`);
 		await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: a.x, y: a.y, button: "left", buttons: 1, clicks: 1 });
 		const steps = 5;
 		for (let i = 1; i <= steps; i++) {

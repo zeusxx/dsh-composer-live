@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20141%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20161%20E2E-2ea44f" alt="tests">
 </p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -38,9 +38,11 @@ dsh-composer-live 把 DSH Web 的输入框变成 Open WebUI 风格的实时编�
 
 ![代码块语法高亮与语言标签](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/code-block.png)
 
-### 选区浮动格式条
+### 选区浮动格式条（v0.4.2 起默认关闭）
 
 ![选区上方浮现的浮动格式条](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/selection-bar.png)
+
+选中一段文字时 B / 斜体 / 行内代码 / 链接四键浮现在选区上方（Open WebUI 形态）。**默认关闭**——常驻工具栏右侧的开关按钮（T 字图标）按需开启，选择跨会话记住（localStorage）。
 
 ## 功能
 
@@ -80,7 +82,7 @@ Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（�
 ### 工具栏与快捷键
 
 - **常驻格式工具栏（v0.2.14 起在输入卡外正上方）**：加粗 / 斜体 / 行内代码 / 链接 / 列表 / 代码块 / 展开。选中文字时包裹、未选中插入空标记；光标落在 `**…**` 内时加粗键自动点亮。工具栏是与输入卡等宽的独立细条，不占输入框内部高度，也永不与正文或图片附件重叠。
-- **选区浮动格式条**（Open WebUI 形态）：选中一段文字，加粗/斜体/代码/链接四键浮现在选区上方。
+- **选区浮动格式条**（Open WebUI 形态，**默认关闭**）：选中一段文字，加粗/斜体/代码/链接四键浮现在选区上方。工具栏按钮开关、跨会话记住选择。
 - **Ctrl+B / Ctrl+I / Ctrl+E** 快捷加粗 / 斜体 / 行内代码——同时拦掉浏览器对 contenteditable 的原生加粗（那会悄悄往草稿里插入真正的 `<b>` 标签）。
 
 ### 粘贴处理
@@ -120,7 +122,7 @@ Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（�
 
 ## 实测版本
 
-每个版本发布前都在两个真实实例上跑完整 141 场景 E2E（覆盖两代支持的架构）：
+每个版本发布前都在两个真实实例上跑完整 161 场景 E2E（覆盖两代支持的架构）：
 
 | DSH 版本 | 状态 |
 | --- | --- |
@@ -189,7 +191,7 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 
 ```bash
 node test-live.cjs      # 246 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs    # 141 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node e2e/run-e2e.mjs    # 161 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
 node e2e/run-perf.mjs   # 性能门槛：空闲零渲染、打字帧中位 <20ms、长任务 ≤8（宽松防退化阈值）
 ```
 

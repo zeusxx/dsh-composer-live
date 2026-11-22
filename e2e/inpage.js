@@ -281,6 +281,8 @@
 	 *   "menuNearInput" 打 o.text（默认 "@"）触发官方候选菜单，断言菜单贴输入框上沿
 	 *                  （间隙 ≤ o.maxGap，默认 30px——v0.2.6 fixTriggerMenuPos 回归）（async）
 	 *   "snapshotClass" 断言 o.selector 的元素数 ≥ o.min（通用 DOM 断言，不限 overlay）
+	 *   "clickBtn"     点击 o.selector 的第一个元素（工具栏按钮，如浮动条开关）（async）
+	 *   "expectAbsent" 断言 o.selector 的元素数 === 0（snapshotClass 的反向）
 	 *  —— 以下 op 由 run-e2e.mjs 拦截，以 CDP trusted 事件执行（真实浏览器路径，
 	 *     合成事件不触发浏览器默认行为——选择扩展/词选择/输入等只有 trusted 事件才有）：
 	 *   "cdpType"      Input.insertText 逐字打字 {text, chars?:true 逐字符}
@@ -343,12 +345,15 @@
 		} else if (o.type === "pasteLiteral") {
 			bi(input, "insertText", String(o.text || ""));
 		} else if (o.type === "pasteClip") {
-			// 合成 ClipboardEvent paste（text/plain）——与真实 Ctrl+V 同事件管线：
-			// 先经过插件 capture 层 paste handler（引用续前缀/大段包代码块），未处理
-			// 才落官方 paste 管线。V 组引用粘贴场景专用（pasteLiteral 走的是
-			// beforeinput insertText 编辑期通道，不经过 paste handler，测不到本功能）。
+			// 合成 ClipboardEvent paste（text/plain，可选 text/html）——与真实 Ctrl+V
+			// 同事件管线：先经过插件 capture 层 paste handler（引用续前缀/大段包代码块），
+			// 未处理才落官方 paste 管线。html 在场 = 从浏览器/Word 复制的富文本形态
+			// （Lexical 走富文本解析产出多 p/格式节点——Z 组 2026-11-20 补，纯文本
+			// 粘贴测不到这条管线）。pasteLiteral 走的是 beforeinput 编辑期通道不经
+			// paste handler。
 			var dtP = new DataTransfer();
 			dtP.setData("text/plain", String(o.text || ""));
+			if (o.html) dtP.setData("text/html", String(o.html));
 			var evP = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
 			Object.defineProperty(evP, "clipboardData", { value: dtP });
 			input.dispatchEvent(evP);
@@ -580,7 +585,91 @@
 		} else if (o.type === "snapshotClass") {
 			var host = o.host === "card" ? ci.card : document;
 			var hits2 = host.querySelectorAll(o.selector).length;
-			if (hits2 < (o.min || 1)) return { ok: false, got: o.selector + " 命中 " + hits2 + " < " + (o.min || 1) };
+			if (hits2 < (o.min || 1)) return { ok: false, got: o.selector + " 命中 " + hits2 + " < " + (o.min || 1)
+				+ (window.__e2eLastClick ? " | lastClick=" + JSON.stringify(window.__e2eLastClick) : "") };
+		} else if (o.type === "clickBtn") {
+			// 点击工具栏/浮动条按钮（如 [data-cl="floatbar"] 开关）——document 级查找
+			var btn = document.querySelector(o.selector);
+			if (!btn) return { ok: false, got: "按钮未找到: " + o.selector };
+			var before = btn.classList.contains("dsh-cl-active");
+			var clicks = 0;
+			// ensure:"on"/"off"（开关键专用）：确保语义而非翻转——场景 retry 重跑时，
+			// 首跑已把开关翻到目标态，无条件 click 会把它翻回去（F2 实测 before:true
+			// 单击翻关导致 active 断言必败）。已在目标态则跳过点击。
+			if (o.ensure === "on" || o.ensure === "off") {
+				var wantOn = o.ensure === "on";
+				var prefsRaw = localStorage.getItem("dsh-composer-live.prefs");
+				var prefsNow2 = false;
+				try { prefsNow2 = !!(prefsRaw && JSON.parse(prefsRaw).floatBar === true); } catch (e3) {}
+				if (prefsNow2 === wantOn) {
+					window.__e2eLastClick = { clicks: 0, before: before, afterActive: before, ensure: o.ensure, skipped: true, prefs: localStorage.getItem("dsh-composer-live.prefs"), btnCount: document.querySelectorAll(o.selector).length };
+					return { ok: true, srcLen: src.length };
+				}
+			}
+			btn.click(); clicks++;
+			await new Promise(function (r) { setTimeout(r, 200); });
+			// 开关键自愈重试：多行注入会触发 hero→active 的 composer remount，click 可能
+			// 落在 remount 窗口内静默失效（E2E 实测：事件已派发但开关类/偏好均未翻转，
+			// 窗口可达秒级）——两轮间隔重试（500ms/800ms），开关类翻转即停
+			if (btn.dataset.cl === "floatbar") {
+				for (var attempt = 0; attempt < 2; attempt++) {
+					await new Promise(function (r) { setTimeout(r, attempt === 0 ? 500 : 800); });
+					var b2 = document.querySelector(o.selector);
+					if (!b2 || b2.classList.contains("dsh-cl-active") !== before) break;
+					b2.click(); clicks++;
+					await new Promise(function (r) { setTimeout(r, 200); });
+				}
+			}
+			// 遥测（失败断言携带）：最后一次点击链的现场
+			var bLast = document.querySelector(o.selector);
+			window.__e2eLastClick = {
+				clicks: clicks, before: before,
+				afterActive: !!(bLast && bLast.classList.contains("dsh-cl-active")),
+				prefs: localStorage.getItem("dsh-composer-live.prefs"),
+				btnCount: document.querySelectorAll(o.selector).length
+			};
+		} else if (o.type === "dumpFloatState") {
+			// 浮条显示链自诊断（F2 排障）：prefs 开但浮条未显示时失败并带全部现场
+			var c9 = document.querySelector('[data-composer-card]');
+			var i9 = c9 && c9.querySelector('[data-composer-input]');
+			var fb9 = c9 && c9.__dshClFloat;
+			var sel9 = window.getSelection();
+			var prefs9 = localStorage.getItem("dsh-composer-live.prefs");
+			var prefsOn9 = false;
+			try { prefsOn9 = !!(prefs9 && JSON.parse(prefs9).floatBar === true); } catch (e9) {}
+			var dump9 = {
+				prefs: prefs9,
+				activeIsInput: i9 ? document.activeElement === i9 : null,
+				activeTag: document.activeElement ? document.activeElement.tagName + "." + String(document.activeElement.className || "").slice(0, 40) : null,
+				selCollapsed: sel9 ? sel9.isCollapsed : null,
+				selInInput: !!(sel9 && sel9.anchorNode && i9 && i9.contains(sel9.anchorNode)),
+				selText: sel9 ? String(sel9).slice(0, 16) : null,
+				menuOpen: c9 ? !!c9.querySelector('[data-trigger-menu], [role="listbox"], [role="menu"], [role="dialog"]') : null,
+				floatExists: !!fb9, floatOn: fb9 ? fb9.classList.contains("dsh-cl-float-on") : null,
+				editable: i9 ? i9.getAttribute("contenteditable") : null
+			};
+			if (prefsOn9 && dump9.floatOn !== true) {
+				if (window.__e2eLastDrag) {
+					try {
+						var ea = document.elementFromPoint(window.__e2eLastDrag.a.x, window.__e2eLastDrag.a.y);
+						window.__e2eLastDrag.elAtA = ea ? (ea.tagName + "." + String(ea.className || "").slice(0, 50) + " inInput=" + !!i9.contains(ea)) : "null";
+					} catch (e10) {}
+				}
+				return { ok: false, got: "浮条未显示: " + JSON.stringify(dump9) + (window.__e2eLastDrag ? " | drag=" + JSON.stringify(window.__e2eLastDrag) : "") };
+			}
+		} else if (o.type === "setPrefs") {
+			// 直写插件偏好（localStorage['dsh-composer-live.prefs']）——F 组场景的
+			// 确定性复位（点击开关是无条件翻转，状态未知时不可靠）
+			try {
+				localStorage.setItem("dsh-composer-live.prefs", JSON.stringify({ floatBar: !!o.floatBar }));
+				var sb = document.querySelector('[data-cl="floatbar"]');
+				if (sb) sb.classList.toggle("dsh-cl-active", !!o.floatBar);
+			}
+			catch (e) { return { ok: false, got: "localStorage 写入失败" }; }
+		} else if (o.type === "expectAbsent") {
+			// 断言选择器命中数 === 0（snapshotClass 的反向：如 .dsh-cl-float-on 应不存在）
+			var nAbs = document.querySelectorAll(o.selector).length;
+			if (nAbs !== 0) return { ok: false, got: o.selector + " 命中 " + nAbs + " 个（期望 0）" };
 		}
 		return { ok: true, srcLen: src.length };
 	}
@@ -969,9 +1058,20 @@
 			var ci = getCardInput();
 			if (!ci) return null;
 			var anchors = buildIndAnchors(ci.input);
-			var r = rangeAtProj(ci.input, anchors, Math.max(0, Math.min(off == null ? 0 : off, indProject(anchors).length)));
+			var proj = indProject(anchors);
+			var clamped = Math.max(0, Math.min(off == null ? 0 : off, proj.length));
+			var r = rangeAtProj(ci.input, anchors, clamped);
 			if (!r) return null;
 			var rr = r.getBoundingClientRect();
+			// collapsed range 落在 para/br 边界（行首 offset）时 rect 可能全零——
+			// 借后一字符的 rect（F 组 2026-11-21 实测 a=(0,0) 坐标漂移误报）
+			if (rr.width === 0 && rr.height === 0 && clamped < proj.length) {
+				var r2 = rangeAtProj(ci.input, anchors, clamped + 1);
+				if (r2) {
+					var q = r2.getBoundingClientRect();
+					if (q.width || q.height) return { x: +q.left.toFixed(1), y: +(q.top + q.height / 2).toFixed(1) };
+				}
+			}
 			return { x: +rr.left.toFixed(1), y: +(rr.top + rr.height / 2).toFixed(1) };
 		},
 		// 当前选区投影区间（诊断）

@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20141%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20161%20E2E-2ea44f" alt="tests">
 </p>
 
 ![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -38,9 +38,11 @@ Caret line shows raw markers (with the blinking caret); every other line is read
 
 ![Code block with syntax highlighting and language label](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/code-block.png)
 
-### Selection toolbar
+### Selection toolbar (off by default since v0.4.2)
 
 ![Floating format bar above the selection](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/selection-bar.png)
+
+Selecting text floats B / italic / code / link buttons above the selection (Open WebUI style). **Off by default** — toggle it from the toolbar button (T icon, right side); the choice is remembered across sessions (localStorage).
 
 ## Features
 
@@ -80,7 +82,7 @@ No hardcoded palette any more: accents follow `--dsw-alias-link`, inline-code ba
 ### Toolbars and shortcuts
 
 - **Format toolbar (outside the composer card since v0.2.14)**: B / italic / code / link / list / code block / expand. Wraps the selection, or inserts empty markers at the caret; B lights up when the caret sits inside `**…**`. The bar is a standalone strip directly above the composer card, card-aligned width, taking no space inside the input area — it never overlaps content or image attachments.
-- **Selection floating format bar** (Open WebUI style): select text and B/italic/code/link appear above the selection.
+- **Selection floating format bar** (Open WebUI style, **off by default**): select text and B/italic/code/link appear above the selection. Toggle it from the toolbar button (state is remembered).
 - **Ctrl+B / Ctrl+I / Ctrl+E** for bold / italic / inline code — which also blocks the browser's native contenteditable bold that would silently insert real `<b>` tags into the draft.
 
 ### Paste handling
@@ -124,7 +126,7 @@ The official composer already provides — and this plugin deliberately does not
 - A **Chromium-based browser** (Chrome, Edge, …): the transparency technique relies on `-webkit-text-fill-color`.
 - OS-independent — it is pure DOM/CSS with no native dependencies.
 
-**Verified DSH versions** — every release runs the full 141-scenario E2E suite on two live instances covering both supported generations:
+**Verified DSH versions** — every release runs the full 161-scenario E2E suite on two live instances covering both supported generations:
 
 | DSH version | Status |
 | --- | --- |
@@ -198,7 +200,7 @@ This plugin focuses purely on the **editing experience**. Other composer plugins
 
 ```bash
 node test-live.cjs      # 246 unit tests (pure functions, no browser needed)
-node e2e/run-e2e.mjs    # 141-scenario × 10-invariant E2E suite against a live instance
+node e2e/run-e2e.mjs    # 161-scenario × 10-invariant E2E suite against a live instance
 node e2e/run-perf.mjs   # performance gate: idle 0 renders, typing frame median <20ms, long tasks ≤8 (loose anti-regression thresholds)
 ```
 

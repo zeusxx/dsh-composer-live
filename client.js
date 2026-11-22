@@ -88,6 +88,13 @@ window.__ModuleLoader__.load({
 		const STOP_BTN_HINTS = ["停止生成", "Stop generating", "停止"];
 		/** 工具栏高度 + 呼吸（占位同步值）。 */
 		const TB_HEIGHT = "36px"; // v0.2.14：卡外独立条高度（原卡内 sticky 的 38px + BAR_RESERVE 让位整体退役）
+		/** 用户偏好存储 key（localStorage，跨会话记住选区浮动条开关态）。 */
+		const PREFS_KEY = "dsh-composer-live.prefs";
+		/** 工具栏「格式键」集合（updateToolbarMarks 只高亮这些——浮动条开关/展开键的
+		 * active 态由各自点击逻辑管理，混进 marks 轮转会被误清；v0.4.2 顺手修复
+		 * 「工具栏复用后展开键 active 被清」的既有小 bug——复用路径把全部 data-cl
+		 * 收进 __dshClBtns，旧实现遍历时无差别 toggle）。 */
+		const FMT_KEYS = ["bold", "italic", "code", "link", "list", "block"];
 		//#endregion
 
 		//#region dsh-composer-live: 安全工具
@@ -1298,7 +1305,9 @@ window.__ModuleLoader__.load({
 				list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.8" cy="4" r=".9" fill="currentColor" stroke="none"/><circle cx="2.8" cy="8" r=".9" fill="currentColor" stroke="none"/><circle cx="2.8" cy="12" r=".9" fill="currentColor" stroke="none"/>',
 				block: '<rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M5.5 6.5L4 8l1.5 1.5M10.5 6.5L12 8l-1.5 1.5"/>',
 				expand: '<path d="M3 6V3h3M13 10v3h-3M3 10v3h3M13 6V3h-3"/>',
-				collapse: '<path d="M6 10v3H3M10 6V3h3M6 6V3H3M10 10v3h3"/>'
+				collapse: '<path d="M6 10v3H3M10 6V3h3M6 6V3H3M10 10v3h3"/>',
+				// 选区浮动条开关：T 字 + 下方选区块（「选中文字出格式条」的语义）
+				floatbar: '<path d="M4 3.5h8M8 3.5V9"/><rect x="4.5" y="11" width="7" height="2" rx="1" fill="currentColor" stroke="none"/>'
 			};
 			return S + (icons[kind] || icons.expand) + "</svg>";
 		}
@@ -1564,11 +1573,26 @@ window.__ModuleLoader__.load({
 				}
 			}
 
+			// ===== 编辑器 class 定型（v0.4.1 提前到签名/度量之前）=====
+			// MONO_ALL（整框等宽）切换必须发生在 syncMetrics 读编辑器字体**之前**：
+			// 否则「删围栏→闭合块翻转」那一轮，度量在 toggle 前读到等宽旧值、签名
+			// 又不含 hasCode → 此后签名恒命中、ov 字体永远停在等宽——编辑器普通字体
+			// vs 渲染层等宽 advance 不匹配，长英文行累积错位（Z17 实测 dx=289px，
+			// 中文行走中文回退不偏所以只在长行暴露）。toggle 幂等，签名命中路径零损耗。
+			// KEEP（chip 段恢复官方显示）同段处理（只改颜色不影响布局）。
+			const hasCode = states.some((st) => st.inCode);
+			{
+				const ps0 = input.querySelectorAll(":scope > p");
+				const hasChip0 = lines.some(paraHasChip);
+				for (const p of ps0) p.classList.toggle(KEEP, hasChip0);
+				input.classList.toggle(MONO_ALL, hasCode);
+			}
+
 			// ===== 渲染签名短路（v0.2.17 性能优化的核心） =====
 			// 视觉输出只依赖：内容(src) + 光标行(围栏高亮) + 几何（相对 overlay——渲染
 			// 输出本身用相对坐标，滚动时字符与 overlay 视口坐标同步变化、差值不变，用
-			// 相对量保证滚动零重渲染）+ 字体栈 + 主题色。全部相同 → 逐字符测量与
-			// innerHTML 重建整体跳过（只更新随精确光标变的工具栏高亮）。idle 轮询 /
+			// 相对量保证滚动零重渲染）+ 字体栈 + 主题色 + 等宽整框位。全部相同 → 逐字符
+			// 测量与 innerHTML 重建整体跳过（只更新随精确光标变的工具栏高亮）。idle 轮询 /
 			// selectionchange / 页面 DOM 噪音路径的无效全量渲染由此消除（优化前 200 行
 			// 文档空闲实测 16 次/秒全量 × ~60ms = 98% 主线程占用、打字 6fps）。
 			const irx = input.getBoundingClientRect();
@@ -1576,34 +1600,23 @@ window.__ModuleLoader__.load({
 			// editSig：选区行集合的指纹（焦点行切换/拖选跨行/焦点进出都要重渲染——
 			// cursorLine 只覆盖「光标所在行变化」，选区另一端变化与焦点态变化由它捕捉）
 			const editSig = editSet ? "e" + Array.from(editSet).join(",") : "r";
-			const renderSig = [src, cursorLine, editSig, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0, themeMetrics.padding].join("\u0000");
+			const renderSig = [src, cursorLine, editSig, Math.round(irx.left - orx.left), Math.round(irx.top - orx.top), Math.round(irx.width), card.__dshClFontSig || "", color0, themeMetrics.padding, hasCode ? "M" : ""].join("\u0000");
 			if (card.__dshClRenderSig === renderSig) {
 				updateToolbarMarks(card, src, caret);
 				card.__dshClCaret = caret;
 				return;
 			}
 			card.__dshClRenderSig = renderSig;
-			syncMetrics(input, ov); // v0.4.0 重段：度量全量复制到 ov（签名 miss 时才需要；内部自有守卫）
+			syncMetrics(input, ov); // v0.4.0 重段：度量全量复制到 ov（此时 MONO_ALL 已定型，读到的是本轮真实字体）
 			if (!card.__dshClRowCache) card.__dshClRowCache = { gen: "", prevLines: [], entries: [], rowEls: [] };
 			// 行缓存的布局代：字体/容器几何/主题/等宽整框任一变化 → 行缓存整体作废。
 			// hasCode（MONO_ALL 整框等宽）必须进代：等宽切换改全部行字体但 fontSig
 			// （哨兵合成栈）不感知——漏了会让 firstDiff 短路用旧测量画错坐标。
-			const hasCode = states.some((st) => st.inCode);
 			const layoutGen = [card.__dshClFontSig || "", Math.round(irx.width), Math.round(irx.left - orx.left), color0, hasCode ? "M" : ""].join("|");
 
-			// 编辑器 class（打点在测量前——等宽打点影响布局，先定型再测量）：
-			// - KEEP（chip 段恢复）段落级
-			// - 等宽「整框」级：文档含已闭合代码块 → input 整框切等宽、渲染全段同栈
-			//   （v0.1.x 同策略）。行级等宽（MONO_SPAN）在「字面 \n」形态物理不可行：
-			//   大段粘贴是单文本锚跨全部行，class 只能打锚 parent（波及整锚），且打点
-			//   循环的行号推进对字面 \n 会全部落 0（v0.2.3 只修了测量侧）。整框两侧
-			//   恒同字体，测量 rect 自动跟随。
-			const ps = input.querySelectorAll(":scope > p");
-			const hasChip = lines.some(paraHasChip);
-			for (const p of ps) {
-				p.classList.toggle(KEEP, hasChip);
-			}
-			input.classList.toggle(MONO_ALL, hasCode); // hasCode 已在 layoutGen 处算过
+			// 编辑器 class（KEEP/MONO_ALL）已于签名段之前定型（v0.4.1：等宽切换必须
+			// 先于 syncMetrics 读字体，否则切换轮读到旧字体且此后签名恒命中永不修正）。
+			// 整框等宽的语义与行级不可行的原因见 v0.1.x 注释（历史保留在 git 历史）。
 
 			// 度量与主题段已于签名短路点之前执行（color 是签名组成部分）
 
@@ -1641,12 +1654,16 @@ window.__ModuleLoader__.load({
 			card.__dshClCaret = caret;
 		}
 
-		/** 工具栏格式键高亮（依赖精确 caret——与重渲染签名解耦，selectionchange 轻路径用）。 */
+		/** 工具栏格式键高亮（依赖精确 caret——与重渲染签名解耦，selectionchange 轻路径用）。
+		 * v0.4.2 只轮转 FMT_KEYS 白名单：浮动条开关/展开键的 active 是开关态不是
+		 * 「光标处格式命中」语义，且复用工具栏路径会把它们收进 __dshClBtns——
+		 * 无差别 toggle 会把展开键高亮清掉（既有小 bug，一并修复）。 */
 		function updateToolbarMarks(card, src, caret) {
 			if (card.__dshClBtns && caret != null) {
 				const marks = decideActiveMarks(src, caret);
-				for (const kind in card.__dshClBtns) {
-					card.__dshClBtns[kind].classList.toggle("dsh-cl-active", marks.indexOf(kind) !== -1);
+				for (const kind of FMT_KEYS) {
+					const btn = card.__dshClBtns[kind];
+					if (btn) btn.classList.toggle("dsh-cl-active", marks.indexOf(kind) !== -1);
 				}
 			}
 		}
@@ -1811,7 +1828,14 @@ window.__ModuleLoader__.load({
 	//#endregion
 
 	//#region dsh-composer-live: 选区浮动格式条
+		/** 选区浮动条开关（v0.4.2 起默认关闭，工具栏按钮切换，localStorage 持久化）。 */
+		function floatBarEnabled() {
+			try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}").floatBar === true; }
+			catch (err) { return false; }
+		}
+
 		function updateFloat(card, floatBar) {
+			if (!floatBarEnabled()) { floatBar.classList.remove("dsh-cl-float-on"); return; }
 			const input = card.querySelector(INPUT_SEL);
 			if (!input || input.getAttribute("contenteditable") !== "true") { floatBar.classList.remove("dsh-cl-float-on"); return; }
 			if (menuOpen(card)) { floatBar.classList.remove("dsh-cl-float-on"); return; }
@@ -1872,6 +1896,14 @@ window.__ModuleLoader__.load({
 					for (const b of toolbar.querySelectorAll(".dsh-cl-btn")) {
 						if (b.dataset.cl) card.__dshClBtns[b.dataset.cl] = b;
 					}
+					// 浮动条开关态从 localStorage 恢复（card 重建复用工具栏后按钮是旧节点，
+					// class 还在；此调用幂等，防的是「复用前用户改过偏好」的边缘时序）
+					const fb0 = toolbar.querySelector('[data-cl="floatbar"]');
+					if (fb0) {
+						const on0 = floatBarEnabled();
+						fb0.classList.toggle("dsh-cl-active", on0);
+						fb0.setAttribute("aria-pressed", on0 ? "true" : "false");
+					}
 				} else {
 				// 常驻格式工具栏（6 格式键 + 展开键）
 				toolbar = document.createElement("div");
@@ -1904,6 +1936,35 @@ window.__ModuleLoader__.load({
 				toolbar.appendChild(fmtBtn("link", "link", "链接 [文字](地址)"));
 				toolbar.appendChild(fmtBtn("list", "list", "列表项 - "));
 				toolbar.appendChild(fmtBtn("block", "block", "代码块 ```"));
+				// 选区浮动格式条开关（v0.4.2 起默认关闭——用户 2026-11-21 拍板：跟随选区
+				// 浮出的格式条对部分用户是干扰，改为按需开启）。偏好存 localStorage 跨会话
+				// 记住；开启瞬间若编辑器里恰有选区，主动刷一次让它立即浮现（selectionchange
+				// 不会因点击按钮再触发）。
+				const floatBtn = document.createElement("button");
+				floatBtn.type = "button";
+				floatBtn.className = "dsh-cl-btn";
+				floatBtn.dataset.cl = "floatbar";
+				floatBtn.title = "选区浮动格式条（选中文字时浮现 B/I/code/link）";
+				floatBtn.setAttribute("aria-label", "选区浮动格式条开关");
+				floatBtn.setAttribute("aria-pressed", "false");
+				floatBtn.innerHTML = iconSvg("floatbar");
+				{
+					const on0 = floatBarEnabled();
+					floatBtn.classList.toggle("dsh-cl-active", on0);
+					floatBtn.setAttribute("aria-pressed", on0 ? "true" : "false");
+				}
+				floatBtn.addEventListener("mousedown", (ev) => ev.preventDefault());
+				floatBtn.addEventListener("click", () => {
+					const on = !floatBarEnabled();
+					try { localStorage.setItem(PREFS_KEY, JSON.stringify({ floatBar: on })); } catch (err) { /* 隐私模式等写入失败 */ }
+					floatBtn.classList.toggle("dsh-cl-active", on);
+					floatBtn.setAttribute("aria-pressed", on ? "true" : "false");
+					const c = findCard();
+					if (!c) return;
+					if (on) { if (c.__dshClFloat) updateFloat(c, c.__dshClFloat); }
+					else if (c.__dshClFloat) c.__dshClFloat.classList.remove("dsh-cl-float-on");
+				});
+				toolbar.appendChild(floatBtn);
 				const expandBtn = document.createElement("button");
 				expandBtn.type = "button";
 				expandBtn.className = "dsh-cl-btn";

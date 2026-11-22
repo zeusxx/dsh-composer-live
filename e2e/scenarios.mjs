@@ -22,6 +22,33 @@ function plainLines(n, eol = "\n") {
 	return Array.from({ length: n }, (_, i) => PLAIN_PATTERNS[i % PLAIN_PATTERNS.length](i)).join(eol);
 }
 
+/** Markdown 标记混排行（Z 组粘贴变体：用户粘贴的真实内容常含格式标记） */
+function mdLines(n) {
+	const pats = [
+		(i) => `## 标题 ${i} 的正文内容`,
+		(i) => `这是**加粗 ${i}**与*斜体*混排的一行内容`,
+		(i) => `- 列表项 ${i}：带 \`行内代码\` 的内容`,
+		(i) => `> 引用行 ${i}，引用块内容`,
+		(i) => `普通文本行 ${i}，含 [链接文字](https://example.com/${i})`,
+		(i) => `${i}. 有序条目，任务 [ ] 待办`,
+	];
+	return Array.from({ length: n }, (_, i) => pats[i % pats.length](i)).join("\n");
+}
+
+/** mdLines 的 text/html 版（模拟从浏览器/Word 复制：多 <p> + <b>/<i> 富文本形态） */
+function mdHtml(n) {
+	const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	const pats = [
+		(i) => "<p>" + esc(`标题 ${i} 的正文内容`) + "</p>",
+		(i) => "<p>这是<b>" + esc(`加粗 ${i}`) + "</b>与<i>斜体</i>混排的一行内容</p>",
+		(i) => "<p>" + esc(`列表项 ${i}：带行内代码的内容`) + "</p>",
+		(i) => "<p>" + esc(`引用行 ${i}，引用块内容`) + "</p>",
+		(i) => "<p>" + esc(`普通文本行 ${i}，含链接文字`) + "</p>",
+		(i) => "<p>" + esc(`${i}. 有序条目，任务待办`) + "</p>",
+	];
+	return Array.from({ length: n }, (_, i) => pats[i % pats.length](i)).join("");
+}
+
 /** 空行密集：每 2 行内容夹 1 个空行（空行也是行——行距探测器的主靶） */
 function blankDense(n, eol = "\n") {
 	const out = [];
@@ -1218,5 +1245,256 @@ export const SCENARIOS = [
 		name: "Y5-focus-walk-bigdoc", group: "Y", focus: "50 行文档光标全扫（editSet 翻转差量）",
 		channel: "bi-text", text: () => plainLines(50, "\n"),
 		ops: [{ type: "caretSweep", n: 50 }, { type: "expectRows" }],
+	},
+
+	// ===== Z 粘贴后编辑组合（2026-11-20 用户报障复现：v0.4.0 行级差量疑似缺陷）=====
+	// 用户三症状：①大段粘贴后换行输入格式错位；②code block 内粘贴纯文本再
+	// Shift+Enter 续写格式错误；③连续粘贴大段显示错误。V 组只测「粘贴后立即
+	// 渲染」，未覆盖「粘贴之后的后续编辑」——差量缓存在这两个动作的组合下
+	// 才暴露。Z 组钉住组合；随后按用户要求扩成「粘贴方式×内容格式×长度」矩阵。
+	{
+		name: "Z1-paste-big-then-break-type", group: "Z", focus: "复现①：大段粘贴→行中换行→续打",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(80, "\n") },
+			{ type: "caretRatio", ratio: 0.4 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "换行后新内容", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z2-paste-into-codeblock-break-type", group: "Z", focus: "复现②：块内粘贴纯文本→Shift+Enter→续打",
+		channel: "bi-lines",
+		text: () => "前置说明\n```js\nconst a = 1;\nconst b = 2;\nconst c = 3;\n```\n后置说明",
+		ops: [
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "pasteClip", text: "粘贴纯文本第一行\n第二行内容\n第三行尾巴" },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "块内续写", chars: true },
+			{ type: "expectClass", selector: ".dsh-cl-bg" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z3-paste-twice-big", group: "Z", focus: "复现③：连续两次大段粘贴",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(60, "\n") },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "pasteClip", text: plainLines(40, "\r\n") },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpType", text: "尾缀内容", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+
+	// ===== Z 变体轰击（2026-11-20 二轮：Z1-Z3 未复现，扩大贴近用户描述的组合）=====
+	{
+		name: "Z4-paste-md-big-then-break", group: "Z", focus: "含 Markdown 标记的大段粘贴→换行续打",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: mdLines(48) },
+			{ type: "caretRatio", ratio: 0.45 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "续写中文内容", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z5-paste-big-into-codeblock", group: "Z", focus: "闭合块内粘贴大段（块行数暴增）→换行续打",
+		channel: "bi-lines",
+		text: () => "```js\nconst a = 1;\n```",
+		ops: [
+			{ type: "caret", off: 14 },
+			{ type: "pasteClip", text: plainLines(40, "\n") },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "块内续写", chars: true },
+			{ type: "expectClass", selector: ".dsh-cl-bg" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z6-paste-backtoback", group: "Z", focus: "无间隔连续双粘（Lexical 异步 commit 窗口）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(50, "\n") },
+			{ type: "pasteClip", text: plainLines(30, "\n") },
+			{ type: "cdpType", text: "尾", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z7-paste-big-edit-linestart", group: "Z", focus: "大段粘贴→行首编辑",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(60, "\n") },
+			{ type: "caretRatio", ratio: 0.35 },
+			{ type: "cdpType", text: "行首插入", chars: true },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "cdpType", text: "改", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z8-paste-crlf-break-type", group: "Z", focus: "CRLF 大段粘贴→换行续打",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(60, "\r\n") },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "换行内容", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z9-paste-big-esc-type", group: "Z", focus: "大段粘贴→Esc 分发→续打",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(50, "\n") },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpKey", key: "Escape" },
+			{ type: "cdpType", text: "继续打字", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z10-paste-selectall-replace", group: "Z", focus: "大段粘贴→全选→再粘贴替换",
+		channel: "bi-text", text: () => "原有草稿内容\n第二行",
+		ops: [
+			{ type: "pasteClip", text: plainLines(40, "\n") },
+			{ type: "key", key: "a", ctrl: true },
+			{ type: "pasteClip", text: mdLines(20) },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "cdpType", text: "替换后打字", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+
+	// ===== Z 富文本粘贴（2026-11-20 三轮：真实复制带 text/html，Lexical 走多 p 富文本解析）=====
+	{
+		name: "Z11-pastehtml-break-type", group: "Z", focus: "富文本粘贴（text/html 多 p）→行中换行续打",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: mdLines(30), html: mdHtml(30) },
+			{ type: "caretRatio", ratio: 0.4 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "富文本后换行续打", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z12-pastehtml-big-multiedit", group: "Z", focus: "富文本大段粘贴→多轮编辑",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: mdLines(50), html: mdHtml(50) },
+			{ type: "caretRatio", ratio: 0.3 },
+			{ type: "cdpType", text: "前部编辑", chars: true },
+			{ type: "caretRatio", ratio: 0.7 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "后部换行续打", chars: true },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z13-paste-mixed-plain-html", group: "Z", focus: "纯文本与富文本交替粘贴→编辑",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: plainLines(30, "\n") },
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "pasteClip", text: mdLines(20), html: mdHtml(20) },
+			{ type: "caretRatio", ratio: 0.4 },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "混合后打字", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z14-pastehtml-into-codeblock", group: "Z", focus: "富文本粘贴进闭合块→Shift+Enter 续打",
+		channel: "bi-lines",
+		text: () => "```js\nconst a = 1;\nconst b = 2;\n```",
+		ops: [
+			{ type: "caretRatio", ratio: 0.5 },
+			{ type: "pasteClip", text: mdLines(20), html: mdHtml(20) },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "块内续打", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+
+	// ===== Z 用户截图定向（2026-11-20 四轮：图 4→5 = 粘贴闭合块后 Backspace 删围栏 → 错乱）=====
+	// 粘贴含闭合代码块的内容后光标在文档尾——第一次 Backspace 恰好删掉闭合围栏的
+	// 最后一个反引号（``` → ``）→ 块状态「闭合→未闭合」翻转（inCode/anyCode 全变）。
+	{
+		name: "Z15-paste-codeblock-backspace-fence", group: "Z", focus: "复现⑤：粘贴闭合块→Backspace 删围栏末字符（状态翻转）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: "说明文字开头\n```js\nconst value = compute(42);\nfunction hello() { return 'world'; }\nconst rows = Array.from(list).map(fn);\n```\n结尾说明" },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectRows" },
+		],
+	},
+	{
+		name: "Z16-paste-codeblock-backspace-type", group: "Z", focus: "复现⑤+续打：删围栏后继续编辑",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: "```js\nconst a = 1;\nconst b = 2;\nconst c = 3;\n```" },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "cdpType", text: "续打内容", chars: true },
+			{ type: "cdpKey", key: "Enter", shift: true },
+			{ type: "cdpType", text: "more text here", chars: true },
+			{ type: "expectRows" },
+		],
+	},
+
+	// Z17：用户截图实形——超长单行代码（软折十几个视觉行）+ 块状态翻转
+	{
+		name: "Z17-paste-longline-codeblock-backspace", group: "Z", focus: "复现⑤实形：超长单行代码块→Backspace 删围栏",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "pasteClip", text: "复制以下整段：\n```js\ncopy(JSON.stringify((function(){var ov=document.querySelector('.dsh-cl-live');if(!ov)return{err:'no-ov'};var input=document.querySelector('[data-composer-input]');return{dbg:window.__dshClDebug(),pCount:input.querySelectorAll(':scope > p').length,rows:Array.from(ov.querySelectorAll('.dsh-cl-row')).map(function(r){return{li:r.dataset.li,x:r.style.left,y:r.style.top,segs:Array.from(r.querySelectorAll('.dsh-cl-c')).map(function(s){return s.className.replace('dsh-cl-c','').trim()+'='+s.textContent}).join('|').slice(0,90)}}),bg:Array.from(ov.querySelectorAll('.dsh-cl-bglayer > *')).map(function(b){return b.className+'@'+b.style.top+'/'+b.style.height})};})(),null,1))\n```" },
+			{ type: "cdpKey", key: "Backspace" },
+			{ type: "expectRows" },
+		],
+	},
+
+	// ===== F 选区浮动条开关（2026-11-21 用户拍板：默认关闭、工具栏开关控制）=====
+	// 覆盖链路：clickBtn 开启（ensure 幂等）→ 插件 handler「开启瞬间若有选区主动刷一次
+	// updateFloat」→ 浮条显示——不依赖 selectionchange（程序化 addRange 不触发它，浏览器
+	// 设计），因此无需 CDP 鼠标拖选：8124/020 环境 auto-memory 3.3 的记忆条目层常驻浮在
+	// 编辑器左上方（pointer-events 命中它），trusted 拖选会选中记忆条目而非草稿文字。
+	{
+		name: "F1-floatbar-default-off", group: "F", focus: "默认关闭：有选区浮条也不出现",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行浮动条开关验证\n第三行收尾",
+		ops: [
+			{ type: "setPrefs", floatBar: false },
+			{ type: "selectRange", from: 9, to: 13 },
+			{ type: "expectAbsent", selector: ".dsh-cl-float-on" },
+			{ type: "snapshotClass", selector: '[data-cl="floatbar"]:not(.dsh-cl-active)', min: 1 },
+		],
+	},
+	{
+		name: "F2-floatbar-enable-show", group: "F", focus: "点开关开启→已有选区浮条立即浮现、按钮高亮",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行浮动条开关验证\n第三行收尾",
+		ops: [
+			{ type: "clickBtn", selector: '[data-cl="floatbar"]', ensure: "off" },
+			{ type: "selectRange", from: 9, to: 13 },
+			{ type: "clickBtn", selector: '[data-cl="floatbar"]', ensure: "on" },
+			{ type: "snapshotClass", selector: ".dsh-cl-float-on", min: 1 },
+			{ type: "snapshotClass", selector: '[data-cl="floatbar"].dsh-cl-active', min: 1 },
+		],
+	},
+	{
+		name: "F3-floatbar-disable-hide", group: "F", focus: "再点关闭→选区还在浮条收起（收尾复位默认关）",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行浮动条开关验证\n第三行收尾",
+		ops: [
+			{ type: "clickBtn", selector: '[data-cl="floatbar"]', ensure: "on" },
+			{ type: "selectRange", from: 9, to: 13 },
+			{ type: "clickBtn", selector: '[data-cl="floatbar"]', ensure: "off" },
+			{ type: "expectAbsent", selector: ".dsh-cl-float-on" },
+			{ type: "snapshotClass", selector: '[data-cl="floatbar"]:not(.dsh-cl-active)', min: 1 },
+			{ type: "setPrefs", floatBar: false },
+		],
 	},
 ];
