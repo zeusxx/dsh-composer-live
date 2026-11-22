@@ -241,7 +241,16 @@ export const SCENARIOS = [
 	},
 
 	// ===== G 粘贴通道 =====
-	{ name: "G1-paste-html", group: "G", channel: "paste-html", focus: "富文本 DOM", text: () => "", html: "<b>加粗行</b><div>div 行内容</div><div>第二 div</div><strong>strong 行</strong>" },
+	// G1 v0.5.0 注：富文本粘贴转 Markdown 会截胡带格式增益的 html 粘贴——本场景的
+	// 目标是「官方富文本管线的 DOM 形态渲染」，改为 ops 内先按 Ctrl+Shift+V（手势
+	// 窗口内走原生官方富文本解析）再 pasteClip，保持原语义；转换路径本身在 V8-V11。
+	{
+		name: "G1-paste-html", group: "G", channel: "bi-text", focus: "富文本 DOM（手势走原生）", text: () => "",
+		ops: [
+			{ type: "key", key: "v", ctrl: true, shift: true },
+			{ type: "pasteClip", text: "加粗行\ndiv 行内容\n第二 div\nstrong 行", html: "<b>加粗行</b><div>div 行内容</div><div>第二 div</div><strong>strong 行</strong>" },
+		],
+	},
 	{ name: "G2-paste-plain-long", group: "G", channel: "paste-plain", focus: "吞\\n 单行路径", text: () => plainLines(12, "\n") },
 	{ name: "G3-paste-code-10", group: "G", channel: "paste-plain", focus: "包围栏", text: () => Array.from({ length: 10 }, (_, i) => `function f${i}() { return ${i}; }`).join("\n") },
 
@@ -1189,6 +1198,55 @@ export const SCENARIOS = [
 		],
 	},
 
+	// ===== V8-V11 富文本粘贴转 Markdown（2026-11-22 任务④）=====
+	{
+		name: "V8-rich-convert", group: "V", focus: "text/html 粘贴→转换为 Markdown 源码（粗体/斜体/行内码/链接/列表/代码块）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{
+				type: "pasteClip", text: "粗体 与 斜体 与 x=1\n第一项\n第二项",
+				html: "<p><b>粗体</b> 与 <i>斜体</i> 与 <code>x=1</code></p><ul><li>第一项</li><li>第二项</li></ul>",
+			},
+			{ type: "expectSrc", expect: "**粗体** 与 *斜体* 与 `x=1`\n\n- 第一项\n- 第二项" },
+			{ type: "expectClass", selector: ".dsh-cl-strong" },
+			{ type: "expectClass", selector: ".dsh-cl-lmark" },
+		],
+	},
+	{
+		name: "V9-rich-plain-gesture", group: "V", focus: "Ctrl+Shift+V 手势窗口内的粘贴走原生（纯文本落入，不转换）",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{ type: "key", key: "v", ctrl: true, shift: true },
+			{
+				type: "pasteClip", text: "粗体 与 斜体",
+				html: "<p><b>粗体</b> 与 <i>斜体</i></p>",
+			},
+			{ type: "expectSrc", expect: "粗体 与 斜体" },
+		],
+	},
+	{
+		name: "V10-rich-no-gain", group: "V", focus: "html 与纯文本无增益（普通段落）→ 原生不转换",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{
+				type: "pasteClip", text: "普通段落没有格式增益",
+				html: "<p>普通段落没有格式增益</p>",
+			},
+			{ type: "expectSrc", expect: "普通段落没有格式增益" },
+		],
+	},
+	{
+		name: "V11-rich-word-junk", group: "V", focus: "Word 风格 HTML（MsoNormal/o:p 垃圾标签）→ 干净 Markdown",
+		channel: "bi-text", text: () => "",
+		ops: [
+			{
+				type: "pasteClip", text: "Word 标题\nWord 正文粗体部分",
+				html: '<h2><span>Word 标题</span></h2><p class=MsoNormal><b>Word 正文</b>粗体部分<o:p></o:p></p>',
+			},
+			{ type: "expectSrc", expect: "## Word 标题\n\n**Word 正文**粗体部分" },
+		],
+	},
+
 	// ===== Y 行级差量渲染（v0.4.0 新增）=====
 	// 背景：渲染层从「每键全量 innerHTML 重建」改为「行容器定位 + 行级差量替换 +
 	// 测量缓存 x/y 拆分验证与 dy 重定基」。五场景各钉一个新机制的靶：
@@ -1495,6 +1553,83 @@ export const SCENARIOS = [
 			{ type: "expectAbsent", selector: ".dsh-cl-float-on" },
 			{ type: "snapshotClass", selector: '[data-cl="floatbar"]:not(.dsh-cl-active)', min: 1 },
 			{ type: "setPrefs", floatBar: false },
+		],
+	},
+
+	// ===== F4-F6 源码模式开关（2026-11-22 任务③：全文显示标记的官方原样形态）=====
+	{
+		name: "F4-srcmode-default-off", group: "F", focus: "默认渲染态：透明化在、渲染字符在、开关未激活",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行 **源码开关** 验证\n第三行收尾",
+		ops: [
+			{ type: "setPrefs", sourceMode: false },
+			{ type: "wait", ms: 400 },
+			{ type: "snapshotClass", selector: '[data-composer-input].dsh-cl-host', min: 1 },
+			{ type: "expectClass", selector: ".dsh-cl-c" },
+			{ type: "snapshotClass", selector: '[data-cl="srcmode"]:not(.dsh-cl-active)', min: 1 },
+		],
+	},
+	{
+		name: "F5-srcmode-enable-official", group: "F", focus: "开→摘透明化回官方原样、overlay 清空、按钮高亮",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行 **源码开关** 验证\n第三行收尾",
+		ops: [
+			{ type: "clickBtn", selector: '[data-cl="srcmode"]', ensure: "on" },
+			{ type: "wait", ms: 400 },
+			{ type: "expectAbsent", selector: '[data-composer-input].dsh-cl-host' },
+			{ type: "expectAbsent", selector: ".dsh-cl-live .dsh-cl-c" },
+			{ type: "snapshotClass", selector: '[data-cl="srcmode"].dsh-cl-active', min: 1 },
+			{ type: "type", text: "源" },
+			{ type: "wait", ms: 400 },
+			{ type: "expectAbsent", selector: '[data-composer-input].dsh-cl-host' },
+			// 收尾恢复渲染态（不变量检查需要渲染覆盖；稳态断言已完成）
+			{ type: "clickBtn", selector: '[data-cl="srcmode"]', ensure: "off" },
+			{ type: "wait", ms: 500 },
+			{ type: "setPrefs", sourceMode: false },
+		],
+	},
+	{
+		name: "F6-srcmode-disable-restore", group: "F", focus: "关→恢复实时渲染（透明化+渲染字符回来），收尾复位默认关",
+		channel: "bi-lines", text: () => "第一行是引子\n第二行 **源码开关** 验证\n第三行收尾",
+		ops: [
+			{ type: "clickBtn", selector: '[data-cl="srcmode"]', ensure: "on" },
+			{ type: "wait", ms: 300 },
+			{ type: "clickBtn", selector: '[data-cl="srcmode"]', ensure: "off" },
+			{ type: "wait", ms: 500 },
+			{ type: "snapshotClass", selector: '[data-composer-input].dsh-cl-host', min: 1 },
+			{ type: "expectClass", selector: ".dsh-cl-c" },
+			{ type: "snapshotClass", selector: '[data-cl="srcmode"]:not(.dsh-cl-active)', min: 1 },
+			{ type: "setPrefs", sourceMode: false },
+		],
+	},
+
+	// ===== N 渲染保险丝（2026-11-22 任务①：主链抛错→官方原样降级+防重抛）=====
+	// 链路：breakRender 劫持 getBoundingClientRect（renderInner 签名段必经）→ 打字
+	// 触发渲染 → 薄壳 catch → 摘透明化/清 overlay/设页面级降级标志 → 恢复劫持后再
+	// 打字断言「不重试」（入口早退）。resetFuse 恢复常态供不变量检查。
+	{
+		name: "N1-render-fuse-degrade", group: "N", focus: "主链抛错→摘透明化回官方显示+降级标志；恢复后不重试",
+		channel: "bi-lines", text: () => "保险丝验证第一行\n第二行内容在场\n第三行收尾",
+		allowConsoleErr: true, // 注入的渲染失败会打设计内的 console.error 留痕（INV-8 场景级豁免）
+		ops: [
+			{ type: "breakRender" },
+			{ type: "type", text: "续" },
+			{ type: "expectFuse" },
+			{ type: "restoreRender" },
+			{ type: "type", text: "打" },
+			{ type: "expectFuse", still: true },
+			{ type: "resetFuse" },
+		],
+	},
+
+	// ===== esc 标记转义（2026-11-22 任务⑤：\* \` 不触发格式）=====
+	{
+		name: "esc1-escaped-star-literal", group: "esc", focus: "\\* 与 \\` 字面化不触发格式；对照真斜体/真行内码正常渲染",
+		channel: "bi-text", text: () => "\\*不是斜体\\* 对照 *真斜体* 与 \\`不是代码\\` 及 `真代码`",
+		ops: [
+			{ type: "wait", ms: 600 },
+			{ type: "expectSrc", expect: "\\*不是斜体\\* 对照 *真斜体* 与 \\`不是代码\\` 及 `真代码`" },
+			{ type: "expectClass", selector: ".dsh-cl-em" },
+			{ type: "expectClass", selector: ".dsh-cl-mk" },
+			{ type: "expectClass", selector: ".dsh-cl-cd" },
 		],
 	},
 ];

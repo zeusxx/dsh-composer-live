@@ -45,6 +45,13 @@ t('mixed', render('**粗** 和 `代码`'), '<div>' + MK('**') + '<strong>粗</st
 t('empty', render(''), '<div>' + NBSP + '</div>');
 t('digits untouched', render('版本 2.0 发布'), '<div>版本 2.0 发布</div>');
 t('digits with code', render('第 3 次 `v1.2` 更新'), '<div>第 3 次 ' + MK('`') + '<code>v1.2</code>' + MK('`') + ' 更新</div>');
+// ===== 标记转义（v0.5.0：\* \` 不触发格式，反斜杠淡化、标记符字面显示、字符数守恒）=====
+t('esc star pair', render('\\*不是斜体\\*'), '<div>' + MK('\\') + '*不是斜体' + MK('\\') + '*</div>');
+t('esc star single', render('a \\* b'), '<div>a ' + MK('\\') + '* b</div>');
+t('esc backtick', render('\\`不是代码\\`'), '<div>' + MK('\\') + '`不是代码' + MK('\\') + '`</div>');
+t('esc star in italic', render('*斜体内 \\* 字面星号*'), '<div>' + MK('*') + '<em>斜体内 ' + MK('\\') + '* 字面星号</em>' + MK('*') + '</div>');
+t('double backslash star stays marker', render('\\\\*still italic*'), '<div>\\\\' + MK('*') + '<em>still italic</em>' + MK('*') + '</div>');
+t('esc star no pairing leftovers', render('\\*a*\\*'), '<div>' + MK('\\') + '*a*' + MK('\\') + '*</div>');
 
 // ===== 空行与多段落 =====
 t('blank line', render('a\n\nb'), '<div>a</div><div>' + NBSP + '</div><div>b</div>');
@@ -371,6 +378,105 @@ t('rd tmark unchanged', rd('dsh-cl-tmark'), 'dsh-cl-tmark');
 t('rd content unchanged', rd('dsh-cl-cd'), 'dsh-cl-cd');
 t('rd plain unchanged', rd(''), '');
 t('rd foreign unchanged', rd('dsh-cl-ref'), 'dsh-cl-ref');
+
+// ===== 富文本粘贴转 Markdown（v0.5.0）=====
+// DOM mock：el()/tx() 手写节点树喂 _mdNode；DOMParser 注入沙箱（parseFromString
+// 返回预置树），_convertHtmlToMarkdown 走全链（mdNode → join → tidy）。
+function tx(v) { return { nodeType: 3, nodeValue: v }; }
+function el(tag, children, attrs) {
+  const kids = children || [];
+  const node = {
+    nodeType: 1, tagName: tag, childNodes: kids, attrs: attrs || {}, parentNode: null,
+    get children() { return kids.filter((c) => c.nodeType === 1); },
+    get textContent() { return kids.map((c) => c.nodeType === 3 ? c.nodeValue : c.textContent).join(''); },
+    getAttribute(n) { return this.attrs[n] != null ? this.attrs[n] : null; },
+    get className() { return this.attrs.className || ''; },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
+    querySelectorAll(sel) {
+      const want = sel.replace(/[.#][\w-]+$/, '').toUpperCase();
+      const hits = [];
+      for (const c of kids) {
+        if (c.nodeType !== 1) continue;
+        if (c.tagName === want) hits.push(c);
+        hits.push(...c.querySelectorAll(sel));
+      }
+      return hits;
+    },
+    cloneNode(deep) {
+      if (!deep) return el(this.tagName, [], this.attrs);
+      const cs = kids.map((c) => c.nodeType === 3 ? tx(c.nodeValue) : c.cloneNode(true));
+      return el(this.tagName, cs, this.attrs);
+    },
+    remove() {
+      if (this.parentNode) {
+        const i = this.parentNode.childNodes.indexOf(this);
+        if (i >= 0) this.parentNode.childNodes.splice(i, 1);
+      }
+    },
+  };
+  for (const c of kids) if (c.nodeType === 1) c.parentNode = node;
+  return node;
+}
+const BODY = (kids) => el('BODY', kids);
+sandbox.__mdTree = null;
+sandbox.DOMParser = class { parseFromString() { return { body: sandbox.__mdTree || BODY([]) }; } };
+const conv = (tree) => { sandbox.__mdTree = tree; return mod._convertHtmlToMarkdown('x'); };
+
+// 决策树
+t('rich: files → native', mod._decideRichPaste({ hasFiles: true, html: '<b>x</b>', plain: 'x' }, false).action, 'native');
+t('rich: plain gesture → native', mod._decideRichPaste({ hasFiles: false, html: '<b>x</b>', plain: 'x' }, true).action, 'native');
+t('rich: no html → native', mod._decideRichPaste({ hasFiles: false, html: '', plain: 'x' }, false).action, 'native');
+t('rich: null clip → native', mod._decideRichPaste(null, false).action, 'native');
+t('rich: no gain → native', mod._decideRichPaste({ hasFiles: false, html: '<p>plain</p>', plain: 'plain' }, false).action, 'native');
+sandbox.__mdTree = BODY([el('P', [el('B', [tx('b')])])]); // DOMParser mock 走预置树（不解析字符串）
+t('rich: gain → convert', mod._decideRichPaste({ hasFiles: false, html: '<p><b>b</b></p>', plain: 'b' }, false), { action: 'convert', markdown: '**b**' });
+sandbox.__mdTree = null;
+
+// 手势跟踪（注入 clock）
+(() => {
+  let now = 0;
+  const tr = mod._plainPasteGestureTracker(1000, () => now);
+  t('gesture: idle not active', tr.active(), false);
+  tr.keydown({ key: 'V', ctrlKey: true, shiftKey: true });
+  t('gesture: armed at once', tr.active(), true);
+  now = 1200;
+  t('gesture: expired', tr.active(), false);
+  tr.keydown({ key: 'v', metaKey: true, shiftKey: true });
+  t('gesture: metaKey re-arms', tr.active(), true);
+  tr.keydown({ key: 'b', ctrlKey: true, shiftKey: true });
+  t('gesture: other key ignored', tr.active(), true);
+})();
+
+// clipboardHasFiles
+t('clipFiles: files array', mod._clipboardHasFiles({ files: [{}, {}], items: [] }), true);
+t('clipFiles: item kind file', mod._clipboardHasFiles({ files: [], items: [{ kind: 'file' }] }), true);
+t('clipFiles: none', mod._clipboardHasFiles({ files: [], items: [{ kind: 'string' }] }), false);
+
+// 转换器：块结构
+t('conv: paragraph', conv(BODY([el('P', [tx('hello world')])])), 'hello world');
+t('conv: heading', conv(BODY([el('H2', [tx('Title')])])), '## Title');
+t('conv: bold+italic+code', conv(BODY([el('P', [el('B', [tx('粗')]), tx(' 与 '), el('EM', [tx('斜')]), tx(' 与 '), el('CODE', [tx('x=1')])])])), '**粗** 与 *斜* 与 `x=1`');
+t('conv: link', conv(BODY([el('P', [el('A', [tx('点这')], { href: 'https://a.b' })])])), '[点这](https://a.b)');
+t('conv: bad scheme link degrades', conv(BODY([el('P', [el('A', [tx('x')], { href: 'javascript:alert(1)' })])])), 'x');
+t('conv: strikethrough', conv(BODY([el('P', [el('DEL', [tx('gone')])])])), '~~gone~~');
+t('conv: br to newline', conv(BODY([el('P', [tx('a'), el('BR'), tx('b')])])), 'a\nb');
+t('conv: img dropped', conv(BODY([el('P', [tx('前 '), el('IMG', [], { src: 'x' }), tx(' 后')])])), '前 后');
+t('conv: ul', conv(BODY([el('UL', [el('LI', [tx('一')]), el('LI', [tx('二')])])])), '- 一\n- 二');
+t('conv: nested list', conv(BODY([el('UL', [el('LI', [tx('外'), el('UL', [el('LI', [tx('内')])])]), el('LI', [tx('尾')])])])), '- 外\n  - 内\n- 尾');
+t('conv: ol', conv(BODY([el('OL', [el('LI', [tx('首')]), el('LI', [tx('次')])])])), '1. 首\n2. 次');
+t('conv: blockquote', conv(BODY([el('BLOCKQUOTE', [el('P', [tx('引文')])])])), '> 引文');
+t('conv: fenced code with lang', conv(BODY([el('PRE', [el('CODE', [tx('const a=1')], { className: 'language-js' })])])), '```js\nconst a=1\n```');
+t('conv: fenced code no lang', conv(BODY([el('PRE', [el('CODE', [tx('裸块')])])])), '```\n裸块\n```');
+t('conv: table', conv(BODY([el('TABLE', [el('TR', [el('TH', [tx('A')]), el('TH', [tx('B')])]), el('TR', [el('TD', [tx('1')]), el('TD', [tx('2')])])])])), '| A | B |\n| --- | --- |\n| 1 | 2 |');
+t('conv: hr', conv(BODY([tx('上'), el('HR'), tx('下')])), '上\n\n---\n\n下');
+t('conv: div with inline kids', conv(BODY([el('DIV', [el('B', [tx('x')]), tx(' y')])])), '**x** y');
+t('conv: div as block container', conv(BODY([el('DIV', [el('P', [tx('一')]), el('P', [tx('二')])])])), '一\n\n二');
+t('conv: script stripped', conv(BODY([el('P', [tx('ok')]), el('SCRIPT', [tx('evil()')])])), 'ok');
+t('conv: empty → native', conv(BODY([])), '');
+t('conv: word-style nested junk', conv(BODY([
+  el('P', [tx(' Word 段落 '), el('SPAN', [tx('内联')])], { className: 'MsoNormal' }),
+  el('P', [el('O:P', [])], { className: 'MsoNormal' }),
+])), 'Word 段落 内联');
 
 console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

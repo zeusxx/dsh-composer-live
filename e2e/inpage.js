@@ -360,6 +360,40 @@
 			// 插件的引用续前缀通道是「120ms 延后重放」（避 Lexical paste 竞态）——
 			// 等重放插入落定再返回，否则后续断言 op 会跑在插入完成前。
 			await new Promise(function (r) { setTimeout(r, 600); });
+		} else if (o.type === "wait") {
+			// 通用等待（bi 注入后 Lexical 异步 commit + 渲染 rAF 合帧需要一拍——
+			// 「注入后立即断言」的场景先 wait 再查）
+			await new Promise(function (r) { setTimeout(r, Math.max(0, o.ms || 300)); });
+		} else if (o.type === "breakRender") {
+			// v0.5.0 渲染保险丝：劫持 input 实例的 getBoundingClientRect 抛错
+			// （实例属性遮蔽原型方法）——renderInner 签名段必经此调用，抛错后由
+			// render 薄壳接住走降级。等一拍让 rAF 合帧的渲染真正跑过。
+			input.getBoundingClientRect = function () { throw new Error("e2e injected render failure"); };
+			await new Promise(function (r) { setTimeout(r, 250); });
+		} else if (o.type === "restoreRender") {
+			// 撤销劫持（删实例属性回到原型方法）——验证「降级后不再重试」用。
+			delete input.getBoundingClientRect;
+			await new Promise(function (r) { setTimeout(r, 50); });
+		} else if (o.type === "expectFuse") {
+			// 断言降级态：透明化已摘（官方原样显示）+ overlay 无渲染字符 +
+			// 页面级降级标志在场。o.still（可选）= 恢复劫持后再触发渲染，断言
+			// 仍降级（入口早退防重抛）。
+			await new Promise(function (r) { setTimeout(r, 150); });
+			if (input.classList.contains(HOST_CLS)) return { ok: false, got: "host class still on (text stays transparent)" };
+			var ovSeg = document.querySelectorAll(OV_SEL + " " + SEG_SEL).length;
+			if (ovSeg > 0) return { ok: false, got: "overlay has " + ovSeg + " rendered chars" };
+			if (ci.card.__dshClDegraded !== true) return { ok: false, got: "degraded flag missing" };
+			if (o.still) {
+				if (input.classList.contains(HOST_CLS)) return { ok: false, got: "render retried after restore" };
+			}
+		} else if (o.type === "resetFuse") {
+			// 清场恢复：撤劫持 + 清降级标志 + 清签名后派发 input 事件触发一轮正常
+			// 渲染（场景后续的不变量检查需要渲染已回到常态）。
+			delete input.getBoundingClientRect;
+			ci.card.__dshClDegraded = false;
+			ci.card.__dshClRenderSig = "";
+			input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+			await new Promise(function (r) { setTimeout(r, 200); });
 		} else if (o.type === "selectRange") {
 			var a = clamp(o.from);
 			var b = clamp(o.to);
@@ -598,9 +632,10 @@
 			// 单击翻关导致 active 断言必败）。已在目标态则跳过点击。
 			if (o.ensure === "on" || o.ensure === "off") {
 				var wantOn = o.ensure === "on";
+				var prefKey = btn.dataset.cl === "srcmode" ? "sourceMode" : "floatBar";
 				var prefsRaw = localStorage.getItem("dsh-composer-live.prefs");
 				var prefsNow2 = false;
-				try { prefsNow2 = !!(prefsRaw && JSON.parse(prefsRaw).floatBar === true); } catch (e3) {}
+				try { prefsNow2 = !!(prefsRaw && JSON.parse(prefsRaw)[prefKey] === true); } catch (e3) {}
 				if (prefsNow2 === wantOn) {
 					window.__e2eLastClick = { clicks: 0, before: before, afterActive: before, ensure: o.ensure, skipped: true, prefs: localStorage.getItem("dsh-composer-live.prefs"), btnCount: document.querySelectorAll(o.selector).length };
 					return { ok: true, srcLen: src.length };
@@ -611,7 +646,7 @@
 			// 开关键自愈重试：多行注入会触发 hero→active 的 composer remount，click 可能
 			// 落在 remount 窗口内静默失效（E2E 实测：事件已派发但开关类/偏好均未翻转，
 			// 窗口可达秒级）——两轮间隔重试（500ms/800ms），开关类翻转即停
-			if (btn.dataset.cl === "floatbar") {
+			if (btn.dataset.cl === "floatbar" || btn.dataset.cl === "srcmode") {
 				for (var attempt = 0; attempt < 2; attempt++) {
 					await new Promise(function (r) { setTimeout(r, attempt === 0 ? 500 : 800); });
 					var b2 = document.querySelector(o.selector);
@@ -659,11 +694,19 @@
 			}
 		} else if (o.type === "setPrefs") {
 			// 直写插件偏好（localStorage['dsh-composer-live.prefs']）——F 组场景的
-			// 确定性复位（点击开关是无条件翻转，状态未知时不可靠）
+			// 确定性复位（点击开关是无条件翻转，状态未知时不可靠）。v0.5.0 起合并写
+			// （floatBar/sourceMode 共存，覆盖写会互相清键）并同步两类开关按钮的类。
 			try {
-				localStorage.setItem("dsh-composer-live.prefs", JSON.stringify({ floatBar: !!o.floatBar }));
-				var sb = document.querySelector('[data-cl="floatbar"]');
-				if (sb) sb.classList.toggle("dsh-cl-active", !!o.floatBar);
+				var patch2 = {};
+				if (o.floatBar != null) patch2.floatBar = !!o.floatBar;
+				if (o.sourceMode != null) patch2.sourceMode = !!o.sourceMode;
+				var cur2 = {};
+				try { cur2 = JSON.parse(localStorage.getItem("dsh-composer-live.prefs") || "{}") || {}; } catch (e4) {}
+				localStorage.setItem("dsh-composer-live.prefs", JSON.stringify(Object.assign(cur2, patch2)));
+				var fbS = document.querySelector('[data-cl="floatbar"]');
+				if (fbS && o.floatBar != null) fbS.classList.toggle("dsh-cl-active", !!o.floatBar);
+				var sb = document.querySelector('[data-cl="srcmode"]');
+				if (sb && o.sourceMode != null) sb.classList.toggle("dsh-cl-active", !!o.sourceMode);
 			}
 			catch (e) { return { ok: false, got: "localStorage 写入失败" }; }
 		} else if (o.type === "expectAbsent") {

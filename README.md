@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20161%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-287%20unit%20%C2%B7%20170%20E2E-2ea44f" alt="tests">
 </p>
 
 ![Live typing demo: inline styles, lists, task items, then a ```js code block auto-completes and highlights as you type](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -87,7 +87,15 @@ No hardcoded palette any more: accents follow `--dsw-alias-link`, inline-code ba
 
 ### Paste handling
 
+- **Rich-text paste to Markdown (v0.5.0)**: content copied from web pages / Word / other AI chats keeps its formatting (bold/italic, lists, tables, code blocks) — the clipboard's `text/html` flavor is converted to clean Markdown source before insertion (zero-dependency built-in converter). Escape hatches: image pastes, the Ctrl/Cmd+Shift+V paste-without-formatting gesture (1-second window), and plain paragraphs (no formatting gain) all take the official native path; one Ctrl+Z undoes the conversion.
 - Large pastes (> 8 lines or > 4 KB) that look like code or logs are **automatically wrapped in a code fence** — one undo step, with a toast hint. Chinese prose is not misdetected; no wrapping when the caret is already inside a code block or the paste itself contains fences.
+- **Quote continuation**: pasting 2+ lines with the caret on a quote line prefixes every following line with `> `.
+- **Marker escaping (v0.5.0)**: `\*` and `` \` `` render literally (CommonMark semantics) — the backslash dims, the star/backtick shows as-is, no formatting triggers.
+
+### Source mode & render fuse (v0.5.0)
+
+- **Source-mode global toggle** (toolbar `</>` button): one click switches the composer back to the official plain rendering with all Markdown markers visible — for inspecting marker structure or copying exact source. Off by default, remembered across sessions, takes effect instantly.
+- **Render fuse**: if any stage of the render pipeline throws (most likely on official DOM changes), the transparent-text mode is stripped automatically and the composer falls back to official display, with a console trace and a page-level degrade flag — the input always stays readable; it can never end up looking empty.
 
 ### Esc dispatch, themes, compatibility
 
@@ -126,7 +134,7 @@ The official composer already provides — and this plugin deliberately does not
 - A **Chromium-based browser** (Chrome, Edge, …): the transparency technique relies on `-webkit-text-fill-color`.
 - OS-independent — it is pure DOM/CSS with no native dependencies.
 
-**Verified DSH versions** — every release runs the full 161-scenario E2E suite on two live instances covering both supported generations:
+**Verified DSH versions** — every release runs the full 170-scenario E2E suite on two live instances covering both supported generations:
 
 | DSH version | Status |
 | --- | --- |
@@ -199,8 +207,8 @@ This plugin focuses purely on the **editing experience**. Other composer plugins
 ## Development
 
 ```bash
-node test-live.cjs      # 246 unit tests (pure functions, no browser needed)
-node e2e/run-e2e.mjs    # 161-scenario × 10-invariant E2E suite against a live instance
+node test-live.cjs      # 287 unit tests (pure functions, no browser needed)
+node e2e/run-e2e.mjs    # 170-scenario × 10-invariant E2E suite against a live instance
 node e2e/run-perf.mjs   # performance gate: idle 0 renders, typing frame median <20ms, long tasks ≤8 (loose anti-regression thresholds)
 ```
 

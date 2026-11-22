@@ -9,7 +9,7 @@
 <p align="center">
 <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
 <img src="https://img.shields.io/badge/DSH-%3E%3D%200.1.5--rc.2-4c6ef5" alt="DSH >= 0.1.5-rc.2">
-<img src="https://img.shields.io/badge/tests-246%20unit%20%C2%B7%20161%20E2E-2ea44f" alt="tests">
+<img src="https://img.shields.io/badge/tests-287%20unit%20%C2%B7%20170%20E2E-2ea44f" alt="tests">
 </p>
 
 ![实时打字演示：行内格式、列表、任务项，```js 代码块自动补全并语法高亮](https://github.com/zeusxx/dsh-composer-live/raw/main/docs/screenshots/demo.gif)
@@ -87,7 +87,15 @@ Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（�
 
 ### 粘贴处理
 
+- **富文本粘贴转 Markdown（v0.5.0）**：从网页 / Word / 其它 AI 聊天复制的内容，剪贴板里的格式（粗斜、列表、表格、代码块）自动转成干净的 Markdown 源码进输入框（零依赖自研转换器）。防误伤决策：图片粘贴、Ctrl+Shift+V 无格式粘贴手势（1 秒窗口）、普通段落（无格式增益）都走官方原生路径；单次撤销可回退。
 - 大段粘贴（超过 8 行或 4KB）且内容像代码/日志时，**自动用代码围栏包起来**——单一撤销单元，配 toast 轻提示。中文长文不误判；光标已在代码块内或内容本身含围栏时不包。
+- **引用行多行续前缀**：光标在引用行粘贴两行以上，第二行起自动补 `> `。
+- **标记转义（v0.5.0）**：`\*` 与 `` \` `` 按字面显示（CommonMark 语义）——反斜杠淡化、星号/反引号原样，不触发任何格式。
+
+### 源码模式与渲染保险丝（v0.5.0）
+
+- **源码模式全局开关**（工具栏 `</>` 键）：一键切回全文显示 Markdown 标记的官方原样形态——检查标记结构、精确复制源码用。默认关闭、跨会话记住、切换即时生效。
+- **渲染异常保险丝**：渲染主链任何一段抛错（官方 DOM 结构变化时最可能），自动摘掉透明化回到官方显示 + console 留痕 + 页面级降级标志——输入框永远有可读文字，不会出现「看起来空了」的状态。
 
 ### Esc 分发、主题、兼容
 
@@ -122,7 +130,7 @@ Obsidian「实时预览」式：**光标/选区所在行显示源码标记**（�
 
 ## 实测版本
 
-每个版本发布前都在两个真实实例上跑完整 161 场景 E2E（覆盖两代支持的架构）：
+每个版本发布前都在两个真实实例上跑完整 170 场景 E2E（覆盖两代支持的架构）：
 
 | DSH 版本 | 状态 |
 | --- | --- |
@@ -190,8 +198,8 @@ DSH_HOME=/path/to/your/.dsh dsh plugin --profile web add dsh-composer-live
 ## 开发
 
 ```bash
-node test-live.cjs      # 246 项单测（纯函数，无需浏览器）
-node e2e/run-e2e.mjs    # 161 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
+node test-live.cjs      # 287 项单测（纯函数，无需浏览器）
+node e2e/run-e2e.mjs    # 170 场景 × 10 不变量的 E2E 套件（对着运行中的实例测）
 node e2e/run-perf.mjs   # 性能门槛：空闲零渲染、打字帧中位 <20ms、长任务 ≤8（宽松防退化阈值）
 ```
 

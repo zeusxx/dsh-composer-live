@@ -74,11 +74,20 @@ window.__ModuleLoader__.load({
 		const TEXT_REF_SEL = "[data-composer-text-ref]";
 		/** keydown 关心的键（v0.4.0 早退白名单）：decideKeyAction 只对这三键返回动作。 */
 		const KEY_ACTS = ["Enter", "Tab", "ArrowDown"];
+		/** v0.5.0 纯文本粘贴手势时间戳：Ctrl/Cmd+Shift+V 的 keydown 记录，paste 时
+		 * 查 1 秒窗口（paste 事件不带修饰键状态——竞品同款手势跟踪方案）。 */
+		let plainPasteArmedAt = 0;
 		/** chip 在「投影文本」里的字符（与官方 detectText 同构）。 */
 		const CHIP_CHAR = "￼";
 		/** 行内代码/图片占位控制字符（不与正文数字混淆）。 */
 		const PH_CODE = "";
 		const PH_IMG = "";
+		/** 标记转义占位（v0.5.0，\* 与 \`）：反斜杠换成 PH_ESC、被转义的标记符换成
+		 * 免疫字符（不参与任何标记正则），格式链跑完后还原为「淡化反斜杠 + 字面
+		 * 标记符」——两字符进两字符出，渲染段与编辑器字符数守恒（对齐不破坏）。 */
+		const PH_ESC = "\u0003";
+		const IMM_STAR = "\u0004";
+		const IMM_BT = "\u0005";
 		/** 防 XSS：链接 href 白名单协议。 */
 		const SAFE_LINK = /^(https?:|mailto:)/i;
 		/** 大段粘贴自动包代码块的阈值。 */
@@ -137,6 +146,11 @@ window.__ModuleLoader__.load({
 			const imgSpans = [];
 			let out = String(line || "");
 
+			// v0.5.0 标记转义（\* 与 \`，CommonMark 对齐）：转义的标记符不参与格式
+			// 匹配。前导非反斜杠才认转义（\\* = 转义反斜杠 + 正常标记，星号照常
+			// 参与匹配）。占位在图片/行内码提取与所有标记正则之前。
+			out = out.replace(/(^|[^\\])\\([*`])/g, (m0, pre, ch) => pre + PH_ESC + (ch === "*" ? IMM_STAR : IMM_BT));
+
 			out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m) => {
 				imgSpans.push(escapeHtml(m));
 				return PH_IMG + (imgSpans.length - 1) + PH_IMG;
@@ -164,6 +178,8 @@ window.__ModuleLoader__.load({
 
 			out = out.replace(new RegExp(PH_CODE + "(\\d+)" + PH_CODE, "g"), (m, i) => MK_OPEN + "`</span><code" + (noMono ? ' class="dsh-cl-ce"' : "") + ">" + codeSpans[+i] + "</code>" + MK_OPEN + "`</span>");
 			out = out.replace(new RegExp(PH_IMG + "(\\d+)" + PH_IMG, "g"), (m, i) => '<span class="dsh-cl-img">' + imgSpans[+i] + "</span>");
+			// v0.5.0 转义还原：淡化反斜杠 + 字面标记符（星号/反引号可见但不触发格式）。
+			out = out.replace(new RegExp(PH_ESC + "([" + IMM_STAR + IMM_BT + "])", "g"), (m0, imm) => MK_OPEN + "\\</span>" + (imm === IMM_STAR ? "*" : "`"));
 			return out;
 		}
 		//#endregion
@@ -1063,6 +1079,202 @@ window.__ModuleLoader__.load({
 			return { insert: insert, lines: lines.length };
 		}
 
+	//#endregion
+	//#region dsh-composer-live: 富文本粘贴转 Markdown（v0.5.0）
+		/** 决策树（竞品 paste-decision 同款语义，ChatGPT 2026-08 官方行为对齐）：
+		 * 剪贴板带文件（图片）→ 原生（官方附件管线）；Ctrl/Cmd+Shift+V 后 1 秒内的
+		 * 粘贴 → 原生（用户明确要无格式粘贴——paste 事件不带修饰键状态，靠 keydown
+		 * 时间窗判定）；无 text/html → 原生；转换结果与纯文本无增益（trim 后相等或
+		 * 为空）→ 原生（普通段落/标题的粘贴不值得改写）；其余 → 转换为 Markdown。 */
+		const PLAIN_PASTE_WINDOW_MS = 1000;
+
+		function decideRichPaste(clip, plainGesture) {
+			if (!clip || clip.hasFiles || plainGesture || !clip.html || clip.html.trim() === "") return { action: "native" };
+			let md = "";
+			try { md = convertHtmlToMarkdown(clip.html); } catch (err) { return { action: "native" }; }
+			if (md === "" || md === String(clip.plain || "").trim()) return { action: "native" };
+			return { action: "convert", markdown: md };
+		}
+
+		/** 纯文本粘贴手势跟踪（keydown 记时间戳，paste 时查窗口）。 */
+		function plainPasteGestureTracker(windowMs, clock) {
+			const win = windowMs || PLAIN_PASTE_WINDOW_MS;
+			const now = clock || Date.now;
+			let armedAt;
+			return {
+				keydown(event) {
+					if (event && (event.ctrlKey || event.metaKey) && event.shiftKey
+						&& typeof event.key === "string" && event.key.toLowerCase() === "v") armedAt = now();
+				},
+				active() { return armedAt !== undefined && now() - armedAt <= win; },
+			};
+		}
+
+		/** 剪贴板是否带文件（图片）：FileList 与 item 列表双查（引擎可能隐藏 File 对象）。 */
+		function clipboardHasFiles(data) {
+			try {
+				if (data.files && data.files.length > 0) return true;
+				if (data.items && data.items.length) {
+					for (const it of data.items) if (it.kind === "file") return true;
+				}
+			} catch (err) { /* 隐藏 File 对象的引擎 */ }
+			return false;
+		}
+
+		/** 行内空白规范化：连续空白折叠成单空格（不 trim——边界空格有语义
+		 *（`**b** 与 x` 的空格来自文本节点边界），trim 由块级/包裹点各自做）。 */
+		function normWs(s) { return String(s || "").replace(/[ \t\r\n]+/g, " "); }
+
+		/** 行内标签 → Markdown 包裹符（内容递归包裹）。 */
+		function mdInlineWrap(tag) {
+			if (tag === "STRONG" || tag === "B") return "**";
+			if (tag === "EM" || tag === "I") return "*";
+			if (tag === "DEL" || tag === "S" || tag === "STRIKE") return "~~";
+			return "";
+		}
+
+		/** 节点的行内 Markdown 化（递归）：br→\n；a→[text](href)（白名单协议）；
+		 * code→`x`；img 丢弃（v1 文本结构集，竞品同款决策）；script/style 剥除。 */
+		function mdInline(node) {
+			let out = "";
+			for (const c of node.childNodes) {
+				if (c.nodeType === 3) { out += normWs(c.nodeValue); continue; }
+				if (c.nodeType !== 1) continue;
+				const tag = c.tagName;
+				if (tag === "BR") { out += "\n"; continue; }
+				if (tag === "A") {
+					const href = safeHref(c.getAttribute("href") || "");
+					const label = mdInline(c).trim() || href;
+					out += href ? "[" + label + "](" + href + ")" : label;
+					continue;
+				}
+				if (tag === "CODE") { const t = mdInline(c).trim(); if (t) out += "`" + t + "`"; continue; }
+				if (tag === "IMG" || tag === "SCRIPT" || tag === "STYLE") continue;
+				const wrap = mdInlineWrap(tag);
+				const inner = mdInline(c);
+				if (wrap && inner.trim()) out += wrap + inner.trim() + wrap; // 包裹内 trim：`** x **` 的空格会废掉 Markdown 标记
+				else out += inner;
+			}
+			return out;
+		}
+
+		/** 块级标签集合（这些标签的子树按块拆分，其余当行内/透明容器）。 */
+		const MD_BLOCK_TAGS = { P: 1, DIV: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, UL: 1, OL: 1, LI: 1, BLOCKQUOTE: 1, PRE: 1, TABLE: 1, HR: 1, SECTION: 1, ARTICLE: 1, MAIN: 1, HEADER: 1, FOOTER: 1, NAV: 1, ASIDE: 1, FIGURE: 1, FIGCAPTION: 1, DL: 1, DT: 1, DD: 1 };
+
+		function hasBlockChild(node) {
+			for (const c of node.childNodes) if (c.nodeType === 1 && MD_BLOCK_TAGS[c.tagName]) return true;
+			return false;
+		}
+
+		/** 列表序列化：整个列表产出一个块（项间紧贴 \n——Markdown 松散列表语义避坑）；
+		 * li 的行内部分先 clone 剥掉嵌套列表再聚合；嵌套列表缩进 +1 跟在父项后。 */
+		function mdList(list, ordered, indent) {
+			const lines = [];
+			let n = 0;
+			for (const li of list.children) {
+				if (li.tagName !== "LI") continue;
+				n++;
+				const marker = "  ".repeat(indent) + (ordered ? n + ". " : "- ");
+				const clone = li.cloneNode(true);
+				for (const sub of Array.from(clone.children)) {
+					if (sub.tagName === "UL" || sub.tagName === "OL") sub.remove();
+				}
+				const body = mdInline(clone).trim();
+				const raw = body ? body.split("\n").map((l) => l.trim()) : [""];
+				const pad = " ".repeat(marker.length);
+				lines.push(marker + raw[0]);
+				for (let i = 1; i < raw.length; i++) lines.push(pad + raw[i]);
+				for (const sub of li.children) {
+					if (sub.tagName === "UL" || sub.tagName === "OL") {
+						for (const blk of mdList(sub, sub.tagName === "OL", indent + 1)) lines.push(blk);
+					}
+				}
+			}
+			return lines.length ? [lines.join("\n")] : [];
+		}
+
+		/** 表格序列化：首行表头 + 分隔行 + 数据行；单元格内换行折叠为空格。 */
+		function mdTable(table) {
+			const rows = [];
+			for (const tr of table.querySelectorAll("tr")) {
+				const cells = [];
+				for (const cell of tr.children) {
+					if (cell.tagName !== "TD" && cell.tagName !== "TH") continue;
+					cells.push(mdInline(cell).replace(/\n/g, " ").trim() || " ");
+				}
+				if (cells.length) rows.push(cells);
+			}
+			if (!rows.length) return "";
+			const width = Math.max(...rows.map((r) => r.length));
+			const line = (cells) => "| " + cells.join(" | ") + " |";
+			const out = [line(rows[0]), "| " + Array(width).fill("---").join(" | ") + " |"];
+			for (let i = 1; i < rows.length; i++) out.push(line(rows[i].concat(Array(width - rows[i].length).fill(" "))));
+			return out.join("\n");
+		}
+
+		/** 段落级文本收尾：跨节点多空格折叠（img 等被剥节点留下的双空格）+ 首尾 trim。 */
+		function mdParaText(node) { return mdInline(node).replace(/ {2,}/g, " ").trim(); }
+
+		/** 块级遍历（核心）：返回块数组，每块内含 \n 的多行字符串；块间由调用方 \n\n 连接。 */
+		function mdNode(node, indent) {
+			const out = [];
+			for (const c of node.childNodes) {
+				if (c.nodeType === 3) { const t = normWs(c.nodeValue).trim(); if (t) out.push(t); continue; }
+				if (c.nodeType !== 1) continue;
+				const tag = c.tagName;
+				if (tag === "SCRIPT" || tag === "STYLE" || tag === "IMG" || tag === "BR" || tag === "HEAD") continue;
+				if (/^H[1-6]$/.test(tag)) {
+					const t = mdInline(c).trim();
+					if (t) out.push("#".repeat(+tag[1]) + " " + t);
+				} else if (tag === "P" || tag === "FIGCAPTION" || tag === "DT" || tag === "DD") {
+					const t = mdParaText(c);
+					if (t) out.push(t);
+				} else if (tag === "PRE") {
+					const code = c.querySelector("code");
+					const lang = code ? ((String(code.className || "").match(/language-([\w+#./-]+)/) || [])[1] || "") : "";
+					const text = String((code || c).textContent || "").replace(/\n+$/, "");
+					if (text.trim()) out.push("```" + lang + "\n" + text + "\n```");
+				} else if (tag === "UL" || tag === "OL") {
+					out.push(...mdList(c, tag === "OL", 0));
+				} else if (tag === "BLOCKQUOTE") {
+					const inner = mdNode(c, 0).join("\n\n");
+					if (inner) out.push(inner.split("\n").map((l) => (l.trim() === "" ? ">" : "> " + l)).join("\n"));
+				} else if (tag === "TABLE") {
+					const t = mdTable(c);
+					if (t) out.push(t);
+				} else if (tag === "HR") {
+					out.push("---");
+				} else if (hasBlockChild(c)) {
+					out.push(...mdNode(c, 0));
+				} else {
+					const t = mdParaText(c).replace(/\n{2,}/g, "\n");
+					if (t) out.push(t);
+				}
+			}
+			return out;
+		}
+
+		/** 收尾整理：列表标记后多空格压缩、三个以上换行压成两个（竞品 tidy 同款）。 */
+		function tidyMarkdown(md) {
+			return String(md || "")
+				.replace(/^(\s*)- {3,}/gm, "$1- ")
+				.replace(/^(\s*)(\d+)\. {2,}/gm, "$1$2. ")
+				.replace(/\n{3,}/g, "\n\n")
+				.trim();
+		}
+
+		/** text/html → 干净 Markdown（自研 DOM walker，零依赖单文件约束下不引 turndown）。
+		 * 覆盖常见粘贴源（AI 聊天/网页/Word）：段落/标题/粗斜/行内码/链接/列表（含嵌套）/
+		 * 引用/围栏代码块（language-* 标签）/表格/hr；未知标签按行内文本处理，script/
+		 * style 剥除，img 丢弃。转换失败或无有效内容返回 ""（决策树走原生）。 */
+		function convertHtmlToMarkdown(html) {
+			if (!html || !String(html).trim()) return "";
+			let doc = null;
+			try { doc = new DOMParser().parseFromString(String(html), "text/html"); } catch (err) { return ""; }
+			if (!doc || !doc.body) return "";
+			return tidyMarkdown(mdNode(doc.body, 0).join("\n\n"));
+		}
+
 		function stateKey(st) {
 			return st.inCode + "|" + st.lang + "|" + (st.fenceOpen ? "o" : "") + (st.fenceClose ? "c" : "") + "|" + (st.kind ? st.kind.type : "");
 		}
@@ -1307,7 +1519,9 @@ window.__ModuleLoader__.load({
 				expand: '<path d="M3 6V3h3M13 10v3h-3M3 10v3h3M13 6V3h-3"/>',
 				collapse: '<path d="M6 10v3H3M10 6V3h3M6 6V3H3M10 10v3h3"/>',
 				// 选区浮动条开关：T 字 + 下方选区块（「选中文字出格式条」的语义）
-				floatbar: '<path d="M4 3.5h8M8 3.5V9"/><rect x="4.5" y="11" width="7" height="2" rx="1" fill="currentColor" stroke="none"/>'
+				floatbar: '<path d="M4 3.5h8M8 3.5V9"/><rect x="4.5" y="11" width="7" height="2" rx="1" fill="currentColor" stroke="none"/>',
+				// 源码模式开关：尖括号对（</>，全文显示 Markdown 标记的源码形态）
+				srcmode: '<path d="M6 4.5L2.5 8 6 11.5M10 4.5L13.5 8 10 11.5"/>'
 			};
 			return S + (icons[kind] || icons.expand) + "</svg>";
 		}
@@ -1509,10 +1723,47 @@ window.__ModuleLoader__.load({
 		 * 行对齐说明：编辑器是单 p + br 分行，行高由 font/line-height 决定——overlay
 		 * 与编辑器同字体同行高（syncMetrics 复制），行高天然一致，无需逐行高度对齐。
 		 */
+		/** 摘透明化回官方原样显示（v0.5.0 三处共用：渲染降级 / 源码模式进入 / 清理）。
+		 * 官方文字与渲染段同字体同坐标，来回切换无视觉跳变。 */
+		function stripToOfficial(card, input, ov) {
+			input.classList.remove(HOST);
+			input.classList.remove(MONO_ALL);
+			input.querySelectorAll("." + KEEP).forEach((el) => el.classList.remove(KEEP));
+			ov.innerHTML = "";
+			card.__dshClRenderSig = ""; // 兜底/源码态不入签名（退出时全量恢复）
+		}
+
 		function render(card) {
-			const input = card.querySelector(INPUT_SEL);
-			const ov = card.querySelector("." + LIVE);
-			if (!input || !ov) return;
+			// v0.5.0 渲染保险丝（主体级）：paint layer 路线下主链任何段抛错 =
+			// 「文字已透明 + overlay 未画」= 用户面对空输入框——比崩溃更隐蔽。
+			// 壳负责降级（摘透明化回官方显示 + 页面级标志防每键重抛 + console 留痕），
+			// inner 负责渲染主体（含既有三类自愈型兜底，见其内部注释①②③——自愈型
+			// 不设标志，下一轮重判；只有这里接住的真异常进入页面级降级，刷新重置）。
+			const input0 = card.querySelector(INPUT_SEL);
+			const ov0 = card.querySelector("." + LIVE);
+			if (!input0 || !ov0) return;
+			if (card.__dshClDegraded) return;
+			// v0.5.0 源码模式（全局开关）：开启=全文显示 Markdown 标记的官方原样形态
+			// （不透明化、无 overlay、无焦点行渲染——「看全部标记/检查结构」用）。
+			// 首轮进入做一次清理，之后每轮直接早退；关闭时清标志，签名已空 → 全量恢复。
+			if (sourceModeEnabled()) {
+				if (!card.__dshClSrcMode) {
+					card.__dshClSrcMode = true;
+					stripToOfficial(card, input0, ov0);
+				}
+				return;
+			}
+			if (card.__dshClSrcMode) card.__dshClSrcMode = false;
+			try {
+				renderInner(card, input0, ov0);
+			} catch (renderErr) {
+				stripToOfficial(card, input0, ov0);
+				card.__dshClDegraded = true;
+				console.error("[dsh-composer-live] render failed; degraded to native display until page reload:", renderErr);
+			}
+		}
+
+		function renderInner(card, input, ov) {
 			fixTriggerMenuPos(card); // 官方菜单悬空兜底（图片附件在场时 @// 菜单定位）
 			const editable = input.getAttribute("contenteditable") === "true";
 			input.classList.toggle(HOST, editable);
@@ -1834,6 +2085,21 @@ window.__ModuleLoader__.load({
 			catch (err) { return false; }
 		}
 
+		/** v0.5.0 偏好合并写：多开关共存（floatBar/sourceMode/…），整对象覆盖写会互相
+		 * 清掉对方的键（v0.4.2 单键时代无感，v0.5.0 起必须合并）。 */
+		function setPrefs(patch) {
+			let cur = {};
+			try { cur = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch (err) { /* 解析失败从空对象开始 */ }
+			try { localStorage.setItem(PREFS_KEY, JSON.stringify(Object.assign(cur, patch))); } catch (err) { /* 隐私模式等写入失败 */ }
+		}
+
+		/** 源码模式开关（v0.5.0，默认关闭）：开启=全文显示 Markdown 标记的官方原样
+		 * 形态——竞品与 ChatGPT 双重验证的刚需（检查标记结构/精确复制源码）。 */
+		function sourceModeEnabled() {
+			try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}").sourceMode === true; }
+			catch (err) { return false; }
+		}
+
 		function updateFloat(card, floatBar) {
 			if (!floatBarEnabled()) { floatBar.classList.remove("dsh-cl-float-on"); return; }
 			const input = card.querySelector(INPUT_SEL);
@@ -1904,6 +2170,13 @@ window.__ModuleLoader__.load({
 						fb0.classList.toggle("dsh-cl-active", on0);
 						fb0.setAttribute("aria-pressed", on0 ? "true" : "false");
 					}
+					// 源码模式开关态同款恢复（v0.5.0）
+					const sb0 = toolbar.querySelector('[data-cl="srcmode"]');
+					if (sb0) {
+						const onS = sourceModeEnabled();
+						sb0.classList.toggle("dsh-cl-active", onS);
+						sb0.setAttribute("aria-pressed", onS ? "true" : "false");
+					}
 				} else {
 				// 常驻格式工具栏（6 格式键 + 展开键）
 				toolbar = document.createElement("div");
@@ -1956,7 +2229,7 @@ window.__ModuleLoader__.load({
 				floatBtn.addEventListener("mousedown", (ev) => ev.preventDefault());
 				floatBtn.addEventListener("click", () => {
 					const on = !floatBarEnabled();
-					try { localStorage.setItem(PREFS_KEY, JSON.stringify({ floatBar: on })); } catch (err) { /* 隐私模式等写入失败 */ }
+					setPrefs({ floatBar: on }); // v0.5.0 合并写（整对象覆盖会清掉 sourceMode 等其它键）
 					floatBtn.classList.toggle("dsh-cl-active", on);
 					floatBtn.setAttribute("aria-pressed", on ? "true" : "false");
 					const c = findCard();
@@ -1965,6 +2238,40 @@ window.__ModuleLoader__.load({
 					else if (c.__dshClFloat) c.__dshClFloat.classList.remove("dsh-cl-float-on");
 				});
 				toolbar.appendChild(floatBtn);
+				// 源码模式开关（v0.5.0）：开启=全文显示 Markdown 标记的官方原样形态
+				// （不透明化/无渲染——检查标记结构、精确复制源码用；竞品与 ChatGPT 双重
+				// 验证的刚需）。切换即时生效：开=摘渲染回官方，关=清签名全量恢复渲染。
+				const srcBtn = document.createElement("button");
+				srcBtn.type = "button";
+				srcBtn.className = "dsh-cl-btn";
+				srcBtn.dataset.cl = "srcmode";
+				srcBtn.title = "源码模式（全文显示 Markdown 标记，停用实时渲染）";
+				srcBtn.setAttribute("aria-label", "源码模式开关");
+				srcBtn.setAttribute("aria-pressed", "false");
+				srcBtn.innerHTML = iconSvg("srcmode");
+				{
+					const on1 = sourceModeEnabled();
+					srcBtn.classList.toggle("dsh-cl-active", on1);
+					srcBtn.setAttribute("aria-pressed", on1 ? "true" : "false");
+				}
+				srcBtn.addEventListener("mousedown", (ev) => ev.preventDefault());
+				srcBtn.addEventListener("click", () => {
+					const on = !sourceModeEnabled();
+					setPrefs({ sourceMode: on });
+					srcBtn.classList.toggle("dsh-cl-active", on);
+					srcBtn.setAttribute("aria-pressed", on ? "true" : "false");
+					const c = findCard();
+					if (!c) return;
+					if (on) {
+						const i = c.querySelector(INPUT_SEL);
+						const o = c.querySelector("." + LIVE);
+						if (i && o) { stripToOfficial(c, i, o); c.__dshClSrcMode = true; }
+					} else {
+						c.__dshClSrcMode = false; // render 的源码分支已清签名 → 全量恢复
+						render(c);
+					}
+				});
+				toolbar.appendChild(srcBtn);
 				const expandBtn = document.createElement("button");
 				expandBtn.type = "button";
 				expandBtn.className = "dsh-cl-btn";
@@ -2052,6 +2359,34 @@ window.__ModuleLoader__.load({
 					if (phase && phase !== "plain") return;
 					if (menuOpen(card)) return;
 					if (!e.clipboardData) return;
+					// v0.5.0 富文本粘贴转 Markdown（决策树优先于引用续前缀/包代码块——转换后
+					// 的文本以纯文本形态重放，重放的剪贴板只带 text/plain，不会二次命中转换）。
+					// clipboardData 必须在本 handler 同步阶段读全（处理器返回后失效）。
+					const rich = decideRichPaste(
+						{
+							hasFiles: clipboardHasFiles(e.clipboardData),
+							html: e.clipboardData.getData("text/html") || "",
+							plain: e.clipboardData.getData("text/plain") || "",
+						},
+						Date.now() - plainPasteArmedAt <= PLAIN_PASTE_WINDOW_MS
+					);
+					if (rich.action === "convert") {
+						e.preventDefault();
+						e.stopPropagation();
+						// 与引用续前缀同款「改写剪贴板 + 120ms 延后重放」通道（单次进撤销栈、
+						// 官方管线原生插入；延迟避开 Lexical 的 paste 后处理竞态窗口）。
+						setTimeout(() => {
+							const dt = new DataTransfer();
+							dt.setData("text/plain", rich.markdown);
+							const replay = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+							Object.defineProperty(replay, "clipboardData", { value: dt });
+							replay.__dshClSynthetic = true;
+							input2.dispatchEvent(replay);
+						}, 120);
+						toast(card, "已将富文本粘贴转换为 Markdown（Ctrl+Z 撤销）");
+						liteRaf();
+						return;
+					}
 					const text = e.clipboardData.getData("text/plain") || "";
 					if (!text) return; // 图片/文件粘贴归官方 intakeFiles
 					const anchors = buildAnchors(input2);
@@ -2104,6 +2439,12 @@ window.__ModuleLoader__.load({
 					// 组合的 B/I/E 分支在后面单独判），其余键——普通打字占绝对多数——不需要
 					// buildAnchors+anchorsText+domOffsetOf 的 O(文档) 前置，直接放行官方。
 					if (!e.ctrlKey && !e.metaKey && !e.altKey && KEY_ACTS.indexOf(e.key) === -1) return;
+					// v0.5.0 纯文本粘贴手势：Ctrl/Cmd+Shift+V 只记时间戳不拦截——浏览器原生
+					// 「粘贴为纯文本」照常，1 秒窗口内的 paste 富文本转换判定放行原生
+					//（paste 事件不带修饰键状态，靠此时间窗判定）。
+					if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "v" || e.key === "V")) {
+						plainPasteArmedAt = Date.now();
+					}
 					const anchors = buildAnchors(input2);
 					const src = anchorsText(anchors);
 					const caret = domOffsetOf(input2, anchors, true);
@@ -2413,6 +2754,13 @@ window.__ModuleLoader__.load({
 		exports._isCursorInCodeBlock = isCursorInCodeBlock;
 		exports._decidePasteWrap = decidePasteWrap;
 		exports._decideQuotePaste = decideQuotePaste;
+		// v0.5.0 富文本粘贴转 Markdown（纯函数导出供单测；convert 依赖 DOMParser，
+		// 单测环境经 vm 注入 mock 后可用，mdNode 亦可直接以手写节点树喂入）
+		exports._decideRichPaste = decideRichPaste;
+		exports._convertHtmlToMarkdown = convertHtmlToMarkdown;
+		exports._mdNode = mdNode;
+		exports._plainPasteGestureTracker = plainPasteGestureTracker;
+		exports._clipboardHasFiles = clipboardHasFiles;
 		exports._codeParaFlags = codeParaFlags;
 		exports._lineIndexOfOffset = lineIndexOfOffset;
 		exports._computeEditLines = computeEditLines;

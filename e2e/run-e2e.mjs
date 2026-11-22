@@ -510,10 +510,12 @@ async function runOnce(sc) {
 			row.meta = v.meta;
 			row.ok = v.ok;
 		}
-		// INV-8 console 错误增量（白名单过滤）
+		// INV-8 console 错误增量（白名单过滤；场景级 allowConsoleErr 豁免——N1 保险丝
+		// 场景注入的渲染失败会打出设计内的 console.error 留痕，属场景预期产物而非回归）
 		const errs = cdp.consoleErrors.slice(cMark).filter((e) => !KNOWN_NOISE.some((k) => e.includes(k)));
-		row.invs["INV-8"] = { ok: errs.length === 0, detail: errs.length ? errs.slice(0, 3).join(" | ") : "零错误" };
-		if (errs.length) row.ok = false;
+		const inv8ok = errs.length === 0 || sc.allowConsoleErr === true;
+		row.invs["INV-8"] = { ok: inv8ok, detail: errs.length ? errs.slice(0, 3).join(" | ") : "零错误" + (sc.allowConsoleErr ? "（场景豁免）" : "") };
+		if (!inv8ok) row.ok = false;
 		return row;
 	} catch (e) {
 		row.ok = false;
